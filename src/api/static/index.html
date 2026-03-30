@@ -142,16 +142,25 @@
       <div class="section">
         <div class="section-header">
           <span>Events</span>
-          <span class="count" id="eventCount"></span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="count" id="eventCount"></span>
+            <select id="eventPageSize" onchange="eventPage=0;refreshData()" style="font-size:11px">
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
         <div id="eventsTable"></div>
+        <div id="eventPagination" style="display:flex;justify-content:center;gap:8px;padding:12px"></div>
       </div>
     </div>
   </main>
 
   <footer>
     &copy; 2026 <a href="https://anvo.io">AnvoIO</a> &mdash;
-    <a href="https://github.com/AnvoIO/core-monitor">GitHub</a>
+    <a href="https://github.com/AnvoIO/core-monitor">AnvoIO/core-monitor</a>
+    <span style="margin-left:8px">v0.1.0</span>
   </footer>
 
   <script>
@@ -159,6 +168,7 @@
     let activeChain = null;
     let lastData = {};
     let refreshTimer = null;
+    let eventPage = 0;
 
     // Persistence
     const savedTimeMode = localStorage.getItem('timeMode');
@@ -180,28 +190,39 @@
       return new Date(Date.now() - days * 86400000).toISOString();
     }
 
+    function pad(n) { return String(n).padStart(2, '0'); }
+
     function formatTime(ts) {
       if (!ts) return '—';
       const d = new Date(ts);
       const utc = document.getElementById('timeMode').value === 'utc';
-      if (utc) return d.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-      return d.toLocaleString();
+      const y = utc ? d.getUTCFullYear() : d.getFullYear();
+      const m = utc ? d.getUTCMonth()+1 : d.getMonth()+1;
+      const day = utc ? d.getUTCDate() : d.getDate();
+      const h = utc ? d.getUTCHours() : d.getHours();
+      const min = utc ? d.getUTCMinutes() : d.getMinutes();
+      const s = utc ? d.getUTCSeconds() : d.getSeconds();
+      return `${y}-${pad(m)}-${pad(day)} ${pad(h)}:${pad(min)}:${pad(s)}${utc ? ' UTC' : ''}`;
     }
 
     function formatTimeShort(ts) {
       if (!ts) return '—';
       const d = new Date(ts);
       const utc = document.getElementById('timeMode').value === 'utc';
-      if (utc) return d.toISOString().substring(11, 19) + ' UTC';
-      return d.toLocaleTimeString();
+      const h = utc ? d.getUTCHours() : d.getHours();
+      const min = utc ? d.getUTCMinutes() : d.getMinutes();
+      const s = utc ? d.getUTCSeconds() : d.getSeconds();
+      return `${pad(h)}:${pad(min)}:${pad(s)}${utc ? ' UTC' : ''}`;
     }
 
     function formatDate(ts) {
       if (!ts) return '—';
       const d = new Date(ts);
       const utc = document.getElementById('timeMode').value === 'utc';
-      if (utc) return d.toISOString().substring(0, 10);
-      return d.toLocaleDateString();
+      const y = utc ? d.getUTCFullYear() : d.getFullYear();
+      const m = utc ? d.getUTCMonth()+1 : d.getMonth()+1;
+      const day = utc ? d.getUTCDate() : d.getDate();
+      return `${y}-${pad(m)}-${pad(day)}`;
     }
 
     document.getElementById('timeMode').addEventListener('change', () => {
@@ -236,6 +257,7 @@
 
     async function switchChain(index) {
       activeChain = chains[index];
+      eventPage = 0;
       document.querySelectorAll('.chain-tab').forEach((t, i) => t.classList.toggle('active', i === index));
       await refreshData();
     }
@@ -246,10 +268,13 @@
       const days = Math.ceil(getTimeframeDays());
       const since = getTimeframeSince();
 
+      const eventLimit = parseInt(document.getElementById('eventPageSize').value);
+      const eventOffset = eventPage * eventLimit;
+
       const [producers, rounds, events, status] = await Promise.all([
         fetchJSON(`/api/v1/${chain}/${network}/producers?days=${days}`),
         fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=50${since ? '&since=' + since : ''}`),
-        fetchJSON(`/api/v1/${chain}/${network}/events?limit=30${since ? '&since=' + since : ''}`),
+        fetchJSON(`/api/v1/${chain}/${network}/events?limit=${eventLimit}&offset=${eventOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/status`).catch(() => null),
       ]);
 
@@ -461,15 +486,17 @@
       const forks = data.forks || [];
       const schedules = data.schedule_changes || [];
       const producerEvents = data.producer_events || [];
+      const eventLimit = parseInt(document.getElementById('eventPageSize').value);
 
       const all = [
         ...missed.map(e => ({ severity: 'red', text: `${e.producer} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
         ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${e.original_producer} replaced by ${e.replacement_producer} at block ${e.block_number}`, time: e.timestamp })),
         ...schedules.map(e => ({ severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
         ...producerEvents.map(e => ({ severity: e.action === 'regproducer' ? 'green' : 'purple', text: `${e.producer} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`, time: e.timestamp })),
-      ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 30);
+      ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
-      document.getElementById('eventCount').textContent = `${all.length} events`;
+      const hasMore = all.length >= eventLimit;
+      document.getElementById('eventCount').textContent = `page ${eventPage + 1}`;
 
       if (all.length === 0) {
         document.getElementById('eventsTable').innerHTML = '<div class="empty-state">No events yet</div>';
@@ -489,6 +516,13 @@
         <thead><tr><th style="width:4px"></th><th>Event</th><th>Time</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
+
+      // Pagination controls
+      const prevDisabled = eventPage === 0 ? ' disabled style="opacity:0.3;cursor:default"' : '';
+      const nextDisabled = !hasMore ? ' disabled style="opacity:0.3;cursor:default"' : '';
+      document.getElementById('eventPagination').innerHTML =
+        `<button class="ctrl-btn"${prevDisabled} onclick="if(eventPage>0){eventPage--;refreshData()}">Previous</button>` +
+        `<button class="ctrl-btn"${nextDisabled} onclick="if(${hasMore}){eventPage++;refreshData()}">Next</button>`;
     }
 
     init();
