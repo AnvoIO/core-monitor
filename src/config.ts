@@ -33,6 +33,7 @@ export interface AppConfig {
   api: {
     port: number;
     host: string;
+    corsOrigin: string;
   };
   postgresUrl: string;
   retentionDays: number;
@@ -91,6 +92,7 @@ export function loadConfig(): AppConfig {
     api: {
       port: parseInt(optionalEnv('API_PORT', '3000'), 10),
       host: optionalEnv('API_HOST', '0.0.0.0'),
+      corsOrigin: optionalEnv('API_CORS_ORIGIN', '*'),
     },
     postgresUrl: requireEnv('POSTGRES_URL'),
     retentionDays: parseInt(optionalEnv('RETENTION_DAYS', '548'), 10),

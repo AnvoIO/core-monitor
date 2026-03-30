@@ -136,6 +136,8 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  log.error({ err }, 'Fatal error');
+  // Sanitize error message to avoid leaking connection strings
+  const msg = err?.message?.replace(/postgresql:\/\/[^@]*@/g, 'postgresql://***@') || 'Unknown error';
+  log.error({ err: msg }, 'Fatal error');
   process.exit(1);
 });

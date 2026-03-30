@@ -42,7 +42,7 @@ export async function producerRoutes(
     '/api/v1/:chain/:network/producers',
     async (request) => {
       const { chain, network } = request.params;
-      const days = parseInt(request.query.days || '30', 10);
+      const days = Math.max(1, Math.min(parseInt(request.query.days || '30', 10) || 30, 9999));
       const stats = await db.getAllProducerStats(chain, network, days);
 
       let scheduleOrder: string[] = [];
@@ -128,11 +128,12 @@ export async function producerRoutes(
 
   app.get<{ Params: Required<ProducerParams>; Querystring: ProducerQuery }>(
     '/api/v1/:chain/:network/producers/:name',
-    async (request) => {
+    async (request, reply) => {
       const { chain, network, name } = request.params;
-      const days = parseInt(request.query.days || '30', 10);
+      const days = Math.max(1, Math.min(parseInt(request.query.days || '30', 10) || 30, 9999));
       const stats = await db.getProducerStats(chain, network, name, days);
       if (!stats) {
+        reply.status(404);
         return { chain, network, producer: name, error: 'Not found' };
       }
       return { chain, network, days, producer: stats };

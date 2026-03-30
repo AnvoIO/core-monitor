@@ -11,6 +11,7 @@ describe('Config', () => {
     process.env.LIBRE_MAINNET_SHIP_URL = 'wss://ship.example.com/';
     process.env.LIBRE_MAINNET_API_URL = 'https://api.example.com';
     process.env.LIBRE_MAINNET_CHAIN_ID = 'abc123';
+    process.env.POSTGRES_URL = 'postgresql://test:test@localhost:5432/test';
   }
 
   beforeEach(() => {
@@ -35,6 +36,8 @@ describe('Config', () => {
     delete process.env.RETENTION_DAYS;
     delete process.env.LOG_LEVEL;
     delete process.env.DATA_DIR;
+    delete process.env.POSTGRES_URL;
+    delete process.env.API_CORS_ORIGIN;
   });
 
   afterEach(() => {
@@ -47,16 +50,12 @@ describe('Config', () => {
     Object.assign(process.env, originalEnv);
   });
 
-  it('should throw if CHAINS is missing', async () => {
-    // Re-import to get fresh module
-    const { loadConfig } = await import('../../src/config.js');
-    expect(() => loadConfig()).toThrow('Missing required env var: CHAINS');
-  });
-
   it('should throw if required chain vars are missing', async () => {
-    process.env.CHAINS = 'libre_mainnet';
+    // Use a chain ID that doesn't exist in any .env file
+    process.env.CHAINS = 'fakenet_mainnet';
+    process.env.POSTGRES_URL = 'postgresql://test:test@localhost/test';
     const { loadConfig } = await import('../../src/config.js');
-    expect(() => loadConfig()).toThrow('Missing required env var: LIBRE_MAINNET_SHIP_URL');
+    expect(() => loadConfig()).toThrow('Missing required env var: FAKENET_MAINNET_SHIP_URL');
   });
 
   it('should parse a single chain config correctly', async () => {

@@ -6,7 +6,6 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
     };
   });
 

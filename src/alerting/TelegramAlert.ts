@@ -49,6 +49,8 @@ export class TelegramAlert implements AlertChannel {
   }
 
   private async sendToChat(chatId: string, text: string): Promise<void> {
+    // Note: Telegram Bot API requires the token in the URL path — this is by design.
+    // Ensure this URL is never logged.
     const url = `https://api.telegram.org/bot${this.apiKey}/sendMessage`;
 
     try {
