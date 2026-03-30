@@ -169,7 +169,7 @@
   <footer>
     &copy; 2026 <a href="https://anvo.io">AnvoIO</a> &mdash;
     <a href="https://github.com/AnvoIO/core-monitor">AnvoIO/core-monitor</a>
-    <span style="margin-left:8px">v0.1.0</span>
+    <span style="margin-left:8px">v0.1.1</span>
   </footer>
 
   <script>
@@ -187,6 +187,13 @@
     if (savedSort) document.getElementById('sortOrder').value = savedSort;
 
     async function fetchJSON(url) { return (await fetch(url)).json(); }
+
+    function esc(s) {
+      if (!s) return '';
+      const d = document.createElement('div');
+      d.textContent = String(s);
+      return d.innerHTML;
+    }
 
     function getTimeframeDays() {
       const tf = document.getElementById('timeframe').value;
@@ -261,7 +268,7 @@
 
     function renderTabs() {
       document.getElementById('chainTabs').innerHTML = chains.map((c, i) =>
-        `<button class="chain-tab ${i === 0 ? 'active' : ''}" onclick="switchChain(${i})">${c.chain} ${c.network}</button>`
+        `<button class="chain-tab ${i === 0 ? 'active' : ''}" onclick="switchChain(${i})">${esc(c.chain)} ${esc(c.network)}</button>`
       ).join('');
     }
 
@@ -418,16 +425,16 @@
           : p.producing === 'degraded' ? '<span class="badge badge-yellow">Degraded</span>'
           : p.producing === 'down' ? '<span class="badge badge-red">Down</span>'
           : '<span class="badge" style="background:rgba(139,143,163,0.15);color:var(--text-dim)">Unknown</span>';
-        const warningIcon = p.warning ? ' <span title="' + p.warning + '" style="color:var(--orange);cursor:help;font-size:14px;">&#9888;</span>' : '';
+        const warningIcon = p.warning ? ' <span title="' + esc(p.warning) + '" style="color:var(--orange);cursor:help;font-size:14px;">&#9888;</span>' : '';
         const outage = p.longest_outage || 0;
         const outageColor = outage > 5 ? 'var(--red)' : outage > 0 ? 'var(--yellow)' : 'var(--text-dim)';
         const style = dimmed ? ' style="opacity:0.6"' : '';
 
         return `<tr${style}>
           <td style="color:var(--text-dim);width:30px">${index}</td>
-          <td><strong>${p.producer}</strong>${warningIcon}</td>
+          <td><strong>${esc(p.producer)}</strong>${warningIcon}</td>
           <td>${statusBadge}</td>
-          <td class="mono" style="font-size:11px;color:var(--text-dim)" title="${p.producer_key||''}">${truncateKey(p.producer_key)}</td>
+          <td class="mono" style="font-size:11px;color:var(--text-dim)" title="${esc(p.producer_key||'')}">${esc(truncateKey(p.producer_key))}</td>
           <td class="mono">${hasData ? p.total_rounds : '—'}</td>
           <td class="mono">${hasData ? p.rounds_produced : '—'}</td>
           <td class="mono" style="color:${(p.rounds_missed||0)>0?'var(--red)':'var(--text-dim)'}">${hasData ? p.rounds_missed : '—'}</td>
@@ -514,10 +521,10 @@
       const eventLimit = parseInt(document.getElementById('eventPageSize').value);
 
       const all = [
-        ...missed.map(e => ({ severity: 'red', text: `${e.producer} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
-        ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${e.original_producer} replaced by ${e.replacement_producer} at block ${e.block_number}`, time: e.timestamp })),
+        ...missed.map(e => ({ severity: 'red', text: `${esc(e.producer)} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
+        ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${esc(e.original_producer)} replaced by ${esc(e.replacement_producer)} at block ${e.block_number}`, time: e.timestamp })),
         ...schedules.map(e => ({ severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
-        ...producerEvents.map(e => ({ severity: e.action === 'regproducer' ? 'green' : 'purple', text: `${e.producer} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`, time: e.timestamp })),
+        ...producerEvents.map(e => ({ severity: e.action === 'regproducer' ? 'green' : 'purple', text: `${esc(e.producer)} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`, time: e.timestamp })),
       ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
       const hasMore = all.length >= eventLimit;

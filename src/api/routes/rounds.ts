@@ -20,10 +20,10 @@ export async function roundRoutes(
     '/api/v1/:chain/:network/rounds',
     async (request) => {
       const { chain, network } = request.params;
-      const limit = parseInt(request.query.limit || '100', 10);
-      const offset = parseInt(request.query.offset || '0', 10);
-      const since = request.query.since || null;
-      const rounds = await db.getRecentRounds(chain, network, Math.min(limit, 500), offset, since);
+      const limit = Math.max(1, Math.min(parseInt(request.query.limit || '100', 10) || 100, 500));
+      const offset = Math.max(0, parseInt(request.query.offset || '0', 10) || 0);
+      const since = request.query.since && /^\d{4}-\d{2}-\d{2}/.test(request.query.since) ? request.query.since : null;
+      const rounds = await db.getRecentRounds(chain, network, limit, offset, since);
       return { chain, network, rounds };
     }
   );
