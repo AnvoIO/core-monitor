@@ -1,4 +1,4 @@
-# AnvoIO Core Monitor
+# Anvo Core Monitor
 
 Block Producer monitoring for Anvo Core and Legacy Antelope/EOSIO chains.
 
