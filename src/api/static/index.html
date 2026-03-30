@@ -136,8 +136,17 @@
       <div class="section">
         <div class="section-header">
           <span>Recent Rounds</span>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span class="count" id="roundCount"></span>
+            <select id="roundPageSize" onchange="roundPage=0;refreshData()" style="font-size:11px">
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
         <div id="roundsTable"></div>
+        <div id="roundPagination" style="display:flex;justify-content:center;gap:8px;padding:12px"></div>
       </div>
       <div class="section">
         <div class="section-header">
@@ -169,6 +178,7 @@
     let lastData = {};
     let refreshTimer = null;
     let eventPage = 0;
+    let roundPage = 0;
 
     // Persistence
     const savedTimeMode = localStorage.getItem('timeMode');
@@ -258,6 +268,7 @@
     async function switchChain(index) {
       activeChain = chains[index];
       eventPage = 0;
+      roundPage = 0;
       document.querySelectorAll('.chain-tab').forEach((t, i) => t.classList.toggle('active', i === index));
       await refreshData();
     }
@@ -270,10 +281,12 @@
 
       const eventLimit = parseInt(document.getElementById('eventPageSize').value);
       const eventOffset = eventPage * eventLimit;
+      const roundLimit = parseInt(document.getElementById('roundPageSize').value);
+      const roundOffset = roundPage * roundLimit;
 
       const [producers, rounds, events, status] = await Promise.all([
         fetchJSON(`/api/v1/${chain}/${network}/producers?days=${days}`),
-        fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=50${since ? '&since=' + since : ''}`),
+        fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=${roundLimit}&offset=${roundOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/events?limit=${eventLimit}&offset=${eventOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/status`).catch(() => null),
       ]);
@@ -460,8 +473,13 @@
 
     function renderRounds(data) {
       const rounds = data.rounds || [];
+      const roundLimit = parseInt(document.getElementById('roundPageSize').value);
+      const hasMore = rounds.length >= roundLimit;
+      document.getElementById('roundCount').textContent = `page ${roundPage + 1}`;
+
       if (rounds.length === 0) {
         document.getElementById('roundsTable').innerHTML = '<div class="empty-state">Waiting for rounds...</div>';
+        document.getElementById('roundPagination').innerHTML = '';
         return;
       }
 
@@ -480,6 +498,12 @@
         <thead><tr><th>Round</th><th>Produced</th><th>Status</th><th>Time</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
+
+      const prevDisabled = roundPage === 0 ? ' disabled style="opacity:0.3;cursor:default"' : '';
+      const nextDisabled = !hasMore ? ' disabled style="opacity:0.3;cursor:default"' : '';
+      document.getElementById('roundPagination').innerHTML =
+        `<button class="ctrl-btn"${prevDisabled} onclick="if(roundPage>0){roundPage--;refreshData()}">Previous</button>` +
+        `<button class="ctrl-btn"${nextDisabled} onclick="if(${hasMore}){roundPage++;refreshData()}">Next</button>`;
     }
 
     function renderEvents(data) {
