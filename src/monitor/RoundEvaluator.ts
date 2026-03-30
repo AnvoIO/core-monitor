@@ -35,18 +35,11 @@ export interface ProducerRoundResult {
   lastBlock: number | null;
 }
 
-/**
- * Calculate the slot number from a block timestamp.
- * Antelope uses 0.5s slots from epoch 2000-01-01T00:00:00.
- */
 export function timestampToSlot(timestamp: string): number {
   const ms = new Date(timestamp).getTime();
   return Math.floor((ms - ANTELOPE_EPOCH_MS) / 500);
 }
 
-/**
- * Calculate the global round number for a slot.
- */
 function slotToGlobalRound(slot: number, scheduleSize: number, blocksPerBp: number): number {
   return Math.floor(slot / (scheduleSize * blocksPerBp));
 }
@@ -59,7 +52,6 @@ export class RoundEvaluator {
   private scheduleActivationGlobalRound: number = 0;
   private lastBlockNum: number = 0;
 
-  // Accumulate blocks per-producer for the current round
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
   private roundStartTimestamp: string = '';
   private roundEndTimestamp: string = '';
@@ -68,20 +60,21 @@ export class RoundEvaluator {
     this.config = config;
     this.db = db;
     this.schedule = schedule;
+  }
 
-    // Restore state
-    const savedBlock = this.db.getState(config.chain, config.network, 'last_block');
+  async init(): Promise<void> {
+    const savedBlock = await this.db.getState(this.config.chain, this.config.network, 'last_block');
     this.lastBlockNum = savedBlock ? parseInt(savedBlock, 10) : 0;
 
-    const savedGlobalRound = this.db.getState(config.chain, config.network, 'current_global_round');
+    const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, 'current_global_round');
     this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
 
-    const savedActivation = this.db.getState(config.chain, config.network, 'schedule_activation_global_round');
+    const savedActivation = await this.db.getState(this.config.chain, this.config.network, 'schedule_activation_global_round');
     this.scheduleActivationGlobalRound = savedActivation ? parseInt(savedActivation, 10) : 0;
 
     log.info(
       {
-        chain: config.chain, network: config.network,
+        chain: this.config.chain, network: this.config.network,
         globalRound: this.currentGlobalRound,
         scheduleRound: this.displayRound,
         lastBlock: this.lastBlockNum,
@@ -90,27 +83,21 @@ export class RoundEvaluator {
     );
   }
 
-  /** The schedule-relative round number for display */
   get displayRound(): number {
     if (this.currentGlobalRound < 0) return 0;
     return this.currentGlobalRound - this.scheduleActivationGlobalRound;
   }
 
-  /** Alias for external consumers */
   get round(): number {
     return this.displayRound;
   }
 
-  /**
-   * Set the schedule activation point. Called when a schedule change is detected.
-   * The activation timestamp determines the round offset for display.
-   */
-  setScheduleActivation(activationTimestamp: string): void {
+  async setScheduleActivation(activationTimestamp: string): Promise<void> {
     const slot = timestampToSlot(activationTimestamp);
     this.scheduleActivationGlobalRound = slotToGlobalRound(
       slot, this.config.scheduleSize, this.config.blocksPerBp
     );
-    this.db.setState(
+    await this.db.setState(
       this.config.chain, this.config.network,
       'schedule_activation_global_round',
       String(this.scheduleActivationGlobalRound)
@@ -125,46 +112,39 @@ export class RoundEvaluator {
     );
   }
 
-  processBlock(block: BlockRecord): RoundResult | null {
+  async processBlock(block: BlockRecord): Promise<RoundResult | null> {
     const { producer, block_num, timestamp } = block;
     const slot = timestampToSlot(timestamp);
     const globalRound = slotToGlobalRound(slot, this.config.scheduleSize, this.config.blocksPerBp);
 
-    // First block ever — initialize
     if (this.currentGlobalRound === -1) {
       this.currentGlobalRound = globalRound;
       this.roundStartTimestamp = timestamp;
       this.roundBlocks.clear();
     }
 
-    // Did we cross into a new round?
     if (globalRound > this.currentGlobalRound) {
-      // Evaluate the completed round
-      const result = this.evaluateRound();
+      const result = await this.evaluateRound();
 
-      // Advance to new round
       this.currentGlobalRound = globalRound;
       this.roundBlocks.clear();
       this.roundStartTimestamp = timestamp;
       this.roundEndTimestamp = '';
 
-      // Save state
-      this.db.setState(this.config.chain, this.config.network, 'current_global_round', String(this.currentGlobalRound));
+      await this.db.setState(this.config.chain, this.config.network, 'current_global_round', String(this.currentGlobalRound));
 
-      // Add this block to the new round
       this.addBlock(producer, block_num);
       this.roundEndTimestamp = timestamp;
       this.lastBlockNum = block_num;
-      this.db.setState(this.config.chain, this.config.network, 'last_block', String(block_num));
+      await this.db.setState(this.config.chain, this.config.network, 'last_block', String(block_num));
 
       return result;
     }
 
-    // Same round — accumulate
     this.addBlock(producer, block_num);
     this.roundEndTimestamp = timestamp;
     this.lastBlockNum = block_num;
-    this.db.setState(this.config.chain, this.config.network, 'last_block', String(block_num));
+    await this.db.setState(this.config.chain, this.config.network, 'last_block', String(block_num));
 
     return null;
   }
@@ -179,7 +159,7 @@ export class RoundEvaluator {
     }
   }
 
-  private evaluateRound(): RoundResult {
+  private async evaluateRound(): Promise<RoundResult> {
     const producers = this.schedule.producers;
     const producerResults: ProducerRoundResult[] = [];
     let producersProduced = 0;
@@ -231,13 +211,11 @@ export class RoundEvaluator {
       producersMissed,
     };
 
-    // Persist
-    this.persistRound(roundResult);
+    await this.persistRound(roundResult);
 
-    // Track first complete round
-    const firstRound = this.db.getState(this.config.chain, this.config.network, 'first_complete_round');
+    const firstRound = await this.db.getState(this.config.chain, this.config.network, 'first_complete_round');
     if (!firstRound) {
-      this.db.setState(
+      await this.db.setState(
         this.config.chain, this.config.network,
         'first_complete_round',
         String(displayRound)
@@ -260,56 +238,54 @@ export class RoundEvaluator {
     return roundResult;
   }
 
-  private persistRound(result: RoundResult): void {
+  private async persistRound(result: RoundResult): Promise<void> {
     if (result.producerResults.length === 0) return;
 
-    this.db.transaction(() => {
-      const roundId = this.db.insertRound({
-        chain: this.config.chain,
-        network: this.config.network,
-        round_number: result.roundNumber,
-        schedule_version: result.scheduleVersion,
-        timestamp_start: result.timestampStart,
-        timestamp_end: result.timestampEnd,
-        producers_scheduled: result.producerResults.length,
-        producers_produced: result.producersProduced,
-        producers_missed: result.producersMissed,
+    const roundId = await this.db.insertRound({
+      chain: this.config.chain,
+      network: this.config.network,
+      round_number: result.roundNumber,
+      schedule_version: result.scheduleVersion,
+      timestamp_start: result.timestampStart,
+      timestamp_end: result.timestampEnd,
+      producers_scheduled: result.producerResults.length,
+      producers_produced: result.producersProduced,
+      producers_missed: result.producersMissed,
+    });
+
+    for (const pr of result.producerResults) {
+      await this.db.insertRoundProducer({
+        round_id: roundId,
+        producer: pr.producer,
+        position: pr.position,
+        blocks_expected: pr.blocksExpected,
+        blocks_produced: pr.blocksProduced,
+        blocks_missed: pr.blocksMissed,
+        first_block: pr.firstBlock,
+        last_block: pr.lastBlock,
       });
 
-      for (const pr of result.producerResults) {
-        this.db.insertRoundProducer({
-          round_id: roundId,
+      if (pr.blocksProduced === 0) {
+        await this.db.insertMissedBlockEvent({
+          chain: this.config.chain,
+          network: this.config.network,
           producer: pr.producer,
-          position: pr.position,
-          blocks_expected: pr.blocksExpected,
-          blocks_produced: pr.blocksProduced,
-          blocks_missed: pr.blocksMissed,
-          first_block: pr.firstBlock,
-          last_block: pr.lastBlock,
+          round_id: roundId,
+          blocks_missed: pr.blocksExpected,
+          block_number: null,
+          timestamp: result.timestampEnd,
         });
-
-        if (pr.blocksProduced === 0) {
-          this.db.insertMissedBlockEvent({
-            chain: this.config.chain,
-            network: this.config.network,
-            producer: pr.producer,
-            round_id: roundId,
-            blocks_missed: pr.blocksExpected,
-            block_number: null,
-            timestamp: result.timestampEnd,
-          });
-        } else if (pr.blocksMissed > 0) {
-          this.db.insertMissedBlockEvent({
-            chain: this.config.chain,
-            network: this.config.network,
-            producer: pr.producer,
-            round_id: roundId,
-            blocks_missed: pr.blocksMissed,
-            block_number: pr.lastBlock,
-            timestamp: result.timestampEnd,
-          });
-        }
+      } else if (pr.blocksMissed > 0) {
+        await this.db.insertMissedBlockEvent({
+          chain: this.config.chain,
+          network: this.config.network,
+          producer: pr.producer,
+          round_id: roundId,
+          blocks_missed: pr.blocksMissed,
+          block_number: pr.lastBlock,
+          timestamp: result.timestampEnd,
+        });
       }
-    });
+    }
   }
 }

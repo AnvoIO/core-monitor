@@ -43,11 +43,10 @@ export async function producerRoutes(
     async (request) => {
       const { chain, network } = request.params;
       const days = parseInt(request.query.days || '30', 10);
-      const stats = db.getAllProducerStats(chain, network, days);
+      const stats = await db.getAllProducerStats(chain, network, days);
 
-      // Include schedule order for client-side sorting
       let scheduleOrder: string[] = [];
-      const scheduleJson = db.getState(chain, network, 'schedule');
+      const scheduleJson = await db.getState(chain, network, 'schedule');
       if (scheduleJson) {
         try {
           const schedule = JSON.parse(scheduleJson);
@@ -55,7 +54,6 @@ export async function producerRoutes(
         } catch {}
       }
 
-      // Fetch all registered producers from chain for additional metadata
       let registeredProducers: any[] = [];
       const chainConfig = config?.chains.find(c => c.chain === chain && c.network === network);
       const chainProducerMap = new Map<string, any>();
@@ -81,10 +79,8 @@ export async function producerRoutes(
           }));
       }
 
-      // Get longest outages for all producers
-      const outages = db.getLongestOutages(chain, network, days);
+      const outages = await db.getLongestOutages(chain, network, days);
 
-      // Enrich scheduled producer stats with chain data (signing key, is_active, outage)
       const enrichedStats = stats.map((s: any) => {
         const chainData = chainProducerMap.get(s.producer);
         return {
@@ -97,12 +93,10 @@ export async function producerRoutes(
         };
       });
 
-      // For registered-but-not-scheduled producers, also look up historical stats
       const statsSet = new Set(stats.map((s: any) => s.producer));
-      const enrichedRegistered = registeredProducers.map((r: any) => {
-        // Check if they have historical data in the DB
+      const enrichedRegistered = await Promise.all(registeredProducers.map(async (r: any) => {
         const historicalStats = !statsSet.has(r.producer)
-          ? db.getProducerStats(chain, network, r.producer, days)
+          ? await db.getProducerStats(chain, network, r.producer, days)
           : null;
 
         return {
@@ -116,7 +110,7 @@ export async function producerRoutes(
           reliability_pct: historicalStats?.reliability_pct ?? null,
           longest_outage: outages.get(r.producer) || 0,
         };
-      });
+      }));
 
       return { chain, network, days, producers: enrichedStats, scheduleOrder, registeredProducers: enrichedRegistered };
     }
@@ -127,7 +121,7 @@ export async function producerRoutes(
     async (request) => {
       const { chain, network, name } = request.params;
       const days = parseInt(request.query.days || '30', 10);
-      const stats = db.getProducerStats(chain, network, name, days);
+      const stats = await db.getProducerStats(chain, network, name, days);
       if (!stats) {
         return { chain, network, producer: name, error: 'Not found' };
       }

@@ -15,11 +15,11 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
       '/api/v1/:chain/:network/status',
       async (request) => {
         const { chain, network } = request.params;
-        const currentGlobalRound = db.getState(chain, network, 'current_global_round');
-        const activationGlobalRound = db.getState(chain, network, 'schedule_activation_global_round');
-        const firstCompleteRound = db.getState(chain, network, 'first_complete_round');
-        const lastBlock = db.getState(chain, network, 'last_block');
-        const scheduleJson = db.getState(chain, network, 'schedule');
+        const currentGlobalRound = await db.getState(chain, network, 'current_global_round');
+        const activationGlobalRound = await db.getState(chain, network, 'schedule_activation_global_round');
+        const firstCompleteRound = await db.getState(chain, network, 'first_complete_round');
+        const lastBlock = await db.getState(chain, network, 'last_block');
+        const scheduleJson = await db.getState(chain, network, 'schedule');
 
         let schedule = null;
         if (scheduleJson) {

@@ -19,7 +19,7 @@ export async function roundRoutes(
     async (request) => {
       const { chain, network } = request.params;
       const limit = parseInt(request.query.limit || '100', 10);
-      const rounds = db.getRecentRounds(chain, network, Math.min(limit, 500));
+      const rounds = await db.getRecentRounds(chain, network, Math.min(limit, 500));
       return { chain, network, rounds };
     }
   );
@@ -28,7 +28,7 @@ export async function roundRoutes(
     '/api/v1/:chain/:network/summaries/weekly',
     async (request) => {
       const { chain, network } = request.params;
-      const summaries = db.getWeeklySummaries(chain, network);
+      const summaries = await db.getWeeklySummaries(chain, network);
       return { chain, network, summaries };
     }
   );
@@ -37,7 +37,7 @@ export async function roundRoutes(
     '/api/v1/:chain/:network/summaries/monthly',
     async (request) => {
       const { chain, network } = request.params;
-      const summaries = db.getMonthlySummaries(chain, network);
+      const summaries = await db.getMonthlySummaries(chain, network);
       return { chain, network, summaries };
     }
   );

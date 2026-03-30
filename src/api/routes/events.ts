@@ -31,16 +31,16 @@ export async function eventRoutes(
       const result: Record<string, any> = { chain, network, type, limit, offset };
 
       if (type === 'missed' || type === 'all') {
-        result.missed_blocks = db.getMissedBlockEvents(chain, network, limit, offset, since, until);
+        result.missed_blocks = await db.getMissedBlockEvents(chain, network, limit, offset, since, until);
       }
       if (type === 'forks' || type === 'all') {
-        result.forks = db.getForkEvents(chain, network, limit, offset, since, until);
+        result.forks = await db.getForkEvents(chain, network, limit, offset, since, until);
       }
       if (type === 'schedule' || type === 'all') {
-        result.schedule_changes = db.getScheduleChanges(chain, network, limit);
+        result.schedule_changes = await db.getScheduleChanges(chain, network, limit);
       }
       if (type === 'producer' || type === 'all') {
-        result.producer_events = db.getProducerEvents(chain, network, limit, offset, since, until);
+        result.producer_events = await db.getProducerEvents(chain, network, limit, offset, since, until);
       }
 
       return result;

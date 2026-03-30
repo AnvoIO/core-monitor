@@ -10,7 +10,7 @@ import type { ShipResult, ShipGetStatusResult } from '../ship/types.js';
 export class ChainMonitor extends EventEmitter {
   private config: ChainConfig;
   private db: Database;
-  private ship: ShipClient;
+  private ship!: ShipClient;
   private schedule: ScheduleTracker;
   private roundEvaluator: RoundEvaluator;
   private log: ReturnType<typeof chainLogger>;
@@ -24,17 +24,29 @@ export class ChainMonitor extends EventEmitter {
     this.config = config;
     this.db = db;
     this.log = chainLogger(config.chain, config.network);
-
     this.schedule = new ScheduleTracker(config.chain, config.network, db);
     this.roundEvaluator = new RoundEvaluator(config, db, this.schedule);
+  }
 
-    // Determine start block — resume from last processed or start from head
-    const lastBlock = db.getState(config.chain, config.network, 'last_block');
+  async start(): Promise<void> {
+    this.log.info({ shipUrl: this.config.shipUrl }, 'Starting chain monitor');
+
+    // Initialize components (async state restore)
+    await this.schedule.init();
+    await this.roundEvaluator.init();
+
+    // Bootstrap schedule if needed
+    if (!this.schedule.schedule) {
+      await this.fetchSchedule();
+    }
+
+    // Determine start block
+    const lastBlock = await this.db.getState(this.config.chain, this.config.network, 'last_block');
     const startBlock = lastBlock ? parseInt(lastBlock, 10) + 1 : 0;
 
     this.ship = new ShipClient({
-      url: config.shipUrl,
-      failoverUrl: config.shipFailoverUrl,
+      url: this.config.shipUrl,
+      failoverUrl: this.config.shipFailoverUrl,
       startBlock,
       fetchBlock: true,
       fetchTraces: true,
@@ -46,11 +58,9 @@ export class ChainMonitor extends EventEmitter {
         { head: status.head.block_num, chainId: status.chain_id },
         'Connected to chain'
       );
-
-      // Validate chain ID
-      if (status.chain_id !== config.chainId) {
+      if (status.chain_id !== this.config.chainId) {
         this.log.error(
-          { expected: config.chainId, got: status.chain_id },
+          { expected: this.config.chainId, got: status.chain_id },
           'Chain ID mismatch — wrong endpoint?'
         );
         this.ship.disconnect();
@@ -58,25 +68,15 @@ export class ChainMonitor extends EventEmitter {
     });
 
     this.ship.on('block', (result: ShipResult) => {
-      this.processBlock(result);
+      this.processBlock(result).catch(err => {
+        this.log.error({ err }, 'Error processing block');
+      });
     });
 
     this.ship.on('max_reconnects', () => {
       this.log.error('Max reconnection attempts reached, monitor stopping');
       this.emit('fatal', new Error('Max reconnection attempts reached'));
     });
-  }
-
-  async start(): Promise<void> {
-    this.log.info(
-      { shipUrl: this.config.shipUrl },
-      'Starting chain monitor'
-    );
-
-    // Bootstrap the schedule via RPC if we don't have one
-    if (!this.schedule.schedule) {
-      await this.fetchSchedule();
-    }
 
     await this.ship.connect();
   }
@@ -105,7 +105,6 @@ export class ChainMonitor extends EventEmitter {
           block_signing_key: p.block_signing_key || p.authority?.[1]?.keys?.[0]?.key || 'unknown',
         }));
 
-        // Try to get schedule activation timestamp from Hyperion
         let activationTimestamp: string | null = null;
         if (this.config.hyperionUrl) {
           activationTimestamp = await this.fetchScheduleActivation(version);
@@ -113,11 +112,10 @@ export class ChainMonitor extends EventEmitter {
 
         const timestamp = activationTimestamp || new Date().toISOString();
 
-        this.schedule.updateSchedule(version, producers, 0, timestamp);
+        await this.schedule.updateSchedule(version, producers, 0, timestamp);
 
-        // Set schedule activation point for round numbering
         if (activationTimestamp) {
-          this.roundEvaluator.setScheduleActivation(activationTimestamp);
+          await this.roundEvaluator.setScheduleActivation(activationTimestamp);
           this.log.info(
             { version, producers: producers.length, activationTimestamp },
             'Schedule bootstrapped from RPC + Hyperion'
@@ -125,7 +123,7 @@ export class ChainMonitor extends EventEmitter {
         } else {
           this.log.info(
             { version, producers: producers.length },
-            'Schedule bootstrapped from RPC (no activation timestamp — rounds will be global)'
+            'Schedule bootstrapped from RPC (no activation timestamp)'
           );
         }
       }
@@ -161,18 +159,17 @@ export class ChainMonitor extends EventEmitter {
 
   stop(): void {
     this.log.info('Stopping chain monitor');
-    this.ship.disconnect();
+    if (this.ship) this.ship.disconnect();
   }
 
-  private processBlock(result: ShipResult): void {
+  private async processBlock(result: ShipResult): Promise<void> {
     if (!result.this_block || !result.block) return;
 
     const blockNum = result.this_block.block_num;
     const blockId = result.this_block.block_id;
     const block = result.block;
 
-    // Fork detection: if prev_block doesn't match our last seen block ID,
-    // the chain has forked and blocks were replaced
+    // Fork detection
     if (this.lastBlockId && result.prev_block) {
       const prevBlockId = result.prev_block.block_id;
       if (prevBlockId !== this.lastBlockId) {
@@ -189,7 +186,7 @@ export class ChainMonitor extends EventEmitter {
           'Fork detected — block replaced'
         );
 
-        this.db.insertForkEvent({
+        await this.db.insertForkEvent({
           chain: this.config.chain,
           network: this.config.network,
           round_id: null,
@@ -213,18 +210,16 @@ export class ChainMonitor extends EventEmitter {
     this.lastBlockId = blockId;
     this.lastBlockProducer = block.producer;
 
-    // Check for schedule change — works with both legacy new_producers
-    // and WTMSIG header extensions (producer_schedule_change_extension, ID 1)
+    // Schedule change detection (legacy + WTMSIG header extensions)
     if (block.new_producers) {
-      const changed = this.schedule.updateSchedule(
+      const changed = await this.schedule.updateSchedule(
         block.new_producers.version,
         block.new_producers.producers,
         blockNum,
         block.timestamp
       );
       if (changed) {
-        // Set the activation point for schedule-relative round numbering
-        this.roundEvaluator.setScheduleActivation(block.timestamp);
+        await this.roundEvaluator.setScheduleActivation(block.timestamp);
 
         this.emit('schedule_change', {
           chain: this.config.chain,
@@ -237,16 +232,15 @@ export class ChainMonitor extends EventEmitter {
       }
     }
 
-    // Check for schedule changes in traces (regproducer / unregprod actions)
+    // Producer registration events
     for (const trace of result.traces) {
       for (const actionTrace of trace.action_traces) {
         const { account, name } = actionTrace.act;
         if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod')) {
-          // Extract producer name from action data
           const producerName = actionTrace.act.authorization?.[0]?.actor
             || String(actionTrace.act.data?.producer || '');
 
-          this.db.insertProducerEvent({
+          await this.db.insertProducerEvent({
             chain: this.config.chain,
             network: this.config.network,
             producer: producerName,
@@ -268,7 +262,7 @@ export class ChainMonitor extends EventEmitter {
       }
     }
 
-    // Feed block to round evaluator
+    // Feed to round evaluator
     const blockRecord: BlockRecord = {
       block_num: blockNum,
       producer: block.producer,
@@ -276,13 +270,13 @@ export class ChainMonitor extends EventEmitter {
       schedule_version: block.schedule_version,
     };
 
-    const roundResult = this.roundEvaluator.processBlock(blockRecord);
+    const roundResult = await this.roundEvaluator.processBlock(blockRecord);
 
     if (roundResult) {
       this.emitRoundResult(roundResult);
     }
 
-    // Periodic progress logging
+    // Progress logging
     this.blocksProcessed++;
     const now = Date.now();
     if (now - this.lastLogTime >= 10000) {
@@ -306,7 +300,6 @@ export class ChainMonitor extends EventEmitter {
   }
 
   private emitRoundResult(result: RoundResult): void {
-    // Emit events for alerting
     const missed = result.producerResults.filter((p) => p.blocksProduced === 0);
     const partial = result.producerResults.filter(
       (p) => p.blocksProduced > 0 && p.blocksMissed > 0

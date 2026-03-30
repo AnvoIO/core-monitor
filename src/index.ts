@@ -9,7 +9,6 @@ import { SlackAlert } from './alerting/SlackAlert.js';
 import { startServer } from './api/server.js';
 import { logger } from './utils/logger.js';
 import cron from 'node-cron';
-import fs from 'fs';
 
 const log = logger.child({ module: 'main' });
 
@@ -20,13 +19,9 @@ async function main(): Promise<void> {
   const config = loadConfig();
   log.info({ chains: config.chains.map((c) => c.id) }, 'Configuration loaded');
 
-  // Ensure data directory exists
-  if (!fs.existsSync(config.dataDir)) {
-    fs.mkdirSync(config.dataDir, { recursive: true });
-  }
-
   // Initialize database
-  const db = new Database(config.dataDir);
+  const db = new Database(config.postgresUrl);
+  await db.init();
 
   // Initialize alerting
   const alertManager = new AlertManager();
@@ -89,39 +84,38 @@ async function main(): Promise<void> {
   }
 
   // Schedule retention purge — daily at 00:00 UTC
-  cron.schedule('0 0 * * *', () => {
+  cron.schedule('0 0 * * *', async () => {
     log.info('Running scheduled retention purge');
-    const retention = new Retention(config.dataDir, config.retentionDays);
-    retention.runAll();
-    retention.close();
+    const retention = new Retention(config.postgresUrl, config.retentionDays);
+    await retention.runAll();
+    await retention.close();
   });
 
   // Schedule weekly summary — Sunday at 23:59 UTC
-  cron.schedule('59 23 * * 0', () => {
+  cron.schedule('59 23 * * 0', async () => {
     log.info('Generating weekly summary');
-    const summarizer = new Summarizer(config.dataDir);
+    const summarizer = new Summarizer(config.postgresUrl);
     const now = new Date();
     const weekEnd = now.toISOString().split('T')[0];
     const weekStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0];
-    summarizer.generateWeeklySummary(weekStart, weekEnd);
-    summarizer.close();
+    await summarizer.generateWeeklySummary(weekStart, weekEnd);
+    await summarizer.close();
   });
 
   // Schedule monthly summary — last day of month at 23:59 UTC
-  cron.schedule('59 23 28-31 * *', () => {
+  cron.schedule('59 23 28-31 * *', async () => {
     const now = new Date();
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    // Only run if tomorrow is the 1st (i.e., today is the last day of the month)
     if (tomorrow.getDate() !== 1) return;
 
     log.info('Generating monthly summary');
-    const summarizer = new Summarizer(config.dataDir);
+    const summarizer = new Summarizer(config.postgresUrl);
     const monthEnd = now.toISOString().split('T')[0];
     const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    summarizer.generateMonthlySummary(monthStart, monthEnd);
-    summarizer.close();
+    await summarizer.generateMonthlySummary(monthStart, monthEnd);
+    await summarizer.close();
   });
 
   // Graceful shutdown
@@ -131,7 +125,7 @@ async function main(): Promise<void> {
       monitor.stop();
     }
     await server.close();
-    db.close();
+    await db.close();
     process.exit(0);
   };
 

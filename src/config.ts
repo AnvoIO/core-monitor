@@ -34,6 +34,7 @@ export interface AppConfig {
     port: number;
     host: string;
   };
+  postgresUrl: string;
   retentionDays: number;
   logLevel: string;
   dataDir: string;
@@ -91,6 +92,7 @@ export function loadConfig(): AppConfig {
       port: parseInt(optionalEnv('API_PORT', '3000'), 10),
       host: optionalEnv('API_HOST', '0.0.0.0'),
     },
+    postgresUrl: requireEnv('POSTGRES_URL'),
     retentionDays: parseInt(optionalEnv('RETENTION_DAYS', '548'), 10),
     logLevel: optionalEnv('LOG_LEVEL', 'info'),
     dataDir: optionalEnv('DATA_DIR', './data'),

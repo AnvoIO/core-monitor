@@ -18,9 +18,10 @@ export class ScheduleTracker {
     this.chain = chain;
     this.network = network;
     this.db = db;
+  }
 
-    // Restore from DB state
-    const saved = this.db.getState(chain, network, 'schedule');
+  async init(): Promise<void> {
+    const saved = await this.db.getState(this.chain, this.network, 'schedule');
     if (saved) {
       try {
         this.currentSchedule = JSON.parse(saved);
@@ -46,12 +47,12 @@ export class ScheduleTracker {
     return this.currentSchedule?.producers ?? [];
   }
 
-  updateSchedule(
+  async updateSchedule(
     version: number,
     producers: Array<{ producer_name: string; block_signing_key: string }>,
     blockNum: number,
     timestamp: string
-  ): boolean {
+  ): Promise<boolean> {
     if (this.currentSchedule && version <= this.currentSchedule.version) {
       return false;
     }
@@ -77,16 +78,14 @@ export class ScheduleTracker {
 
     this.currentSchedule = { version, producers: newProducers };
 
-    // Persist to DB
-    this.db.setState(
+    await this.db.setState(
       this.chain,
       this.network,
       'schedule',
       JSON.stringify(this.currentSchedule)
     );
 
-    // Record schedule change event
-    this.db.insertScheduleChange({
+    await this.db.insertScheduleChange({
       chain: this.chain,
       network: this.network,
       schedule_version: version,

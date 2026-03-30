@@ -1,27 +1,24 @@
-import BetterSqlite3 from 'better-sqlite3';
-import path from 'path';
+import pg from 'pg';
 import { logger } from '../utils/logger.js';
 
 const log = logger.child({ module: 'Summarizer' });
 
 export class Summarizer {
-  private db: BetterSqlite3.Database;
+  private pool: pg.Pool;
 
-  constructor(dataDir: string) {
-    const dbPath = path.join(dataDir, 'core-monitor.db');
-    this.db = new BetterSqlite3(dbPath);
+  constructor(connectionString: string) {
+    this.pool = new pg.Pool({ connectionString, max: 2 });
   }
 
-  generateWeeklySummary(weekStart: string, weekEnd: string): void {
+  async generateWeeklySummary(weekStart: string, weekEnd: string): Promise<void> {
     log.info({ weekStart, weekEnd }, 'Generating weekly summary');
 
-    this.db.exec('BEGIN');
+    const client = await this.pool.connect();
     try {
-      const rows = this.db.prepare(`
-        SELECT
-          r.chain,
-          r.network,
-          rp.producer,
+      await client.query('BEGIN');
+
+      const rows = (await client.query(
+        `SELECT r.chain, r.network, rp.producer,
           COUNT(DISTINCT r.id) as rounds_scheduled,
           SUM(CASE WHEN rp.blocks_produced > 0 THEN 1 ELSE 0 END) as rounds_produced,
           SUM(CASE WHEN rp.blocks_produced = 0 THEN 1 ELSE 0 END) as rounds_missed,
@@ -30,45 +27,22 @@ export class Summarizer {
           SUM(rp.blocks_missed) as blocks_missed
         FROM round_producers rp
         JOIN rounds r ON rp.round_id = r.id
-        WHERE r.timestamp_start >= ? AND r.timestamp_start < ?
-        GROUP BY r.chain, r.network, rp.producer
-      `).all(weekStart, weekEnd) as any[];
+        WHERE r.timestamp_start >= $1 AND r.timestamp_start < $2
+        GROUP BY r.chain, r.network, rp.producer`,
+        [weekStart, weekEnd]
+      )).rows;
 
-      const forkCounts = this.db.prepare(`
-        SELECT
-          chain, network, original_producer as producer,
-          COUNT(*) as fork_count
-        FROM fork_events
-        WHERE timestamp >= ? AND timestamp < ?
-        GROUP BY chain, network, original_producer
-      `).all(weekStart, weekEnd) as any[];
+      const forkCounts = (await client.query(
+        `SELECT chain, network, original_producer as producer, COUNT(*) as fork_count
+        FROM fork_events WHERE timestamp >= $1 AND timestamp < $2
+        GROUP BY chain, network, original_producer`,
+        [weekStart, weekEnd]
+      )).rows;
 
       const forkMap = new Map<string, number>();
       for (const fc of forkCounts) {
-        forkMap.set(`${fc.chain}:${fc.network}:${fc.producer}`, fc.fork_count);
+        forkMap.set(`${fc.chain}:${fc.network}:${fc.producer}`, parseInt(fc.fork_count));
       }
-
-      const insert = this.db.prepare(`
-        INSERT INTO weekly_summaries (
-          chain, network, week_start, week_end, producer,
-          rounds_scheduled, rounds_produced, rounds_missed,
-          blocks_expected, blocks_produced, blocks_missed,
-          fork_count, reliability_pct
-        ) VALUES (
-          @chain, @network, @week_start, @week_end, @producer,
-          @rounds_scheduled, @rounds_produced, @rounds_missed,
-          @blocks_expected, @blocks_produced, @blocks_missed,
-          @fork_count, @reliability_pct
-        ) ON CONFLICT(chain, network, week_start, producer) DO UPDATE SET
-          rounds_scheduled = excluded.rounds_scheduled,
-          rounds_produced = excluded.rounds_produced,
-          rounds_missed = excluded.rounds_missed,
-          blocks_expected = excluded.blocks_expected,
-          blocks_produced = excluded.blocks_produced,
-          blocks_missed = excluded.blocks_missed,
-          fork_count = excluded.fork_count,
-          reliability_pct = excluded.reliability_pct
-      `);
 
       for (const row of rows) {
         const forks = forkMap.get(`${row.chain}:${row.network}:${row.producer}`) || 0;
@@ -76,41 +50,47 @@ export class Summarizer {
           ? Math.round((row.blocks_produced / row.blocks_expected) * 10000) / 100
           : 100;
 
-        insert.run({
-          chain: row.chain,
-          network: row.network,
-          week_start: weekStart,
-          week_end: weekEnd,
-          producer: row.producer,
-          rounds_scheduled: row.rounds_scheduled,
-          rounds_produced: row.rounds_produced,
-          rounds_missed: row.rounds_missed,
-          blocks_expected: row.blocks_expected,
-          blocks_produced: row.blocks_produced,
-          blocks_missed: row.blocks_missed,
-          fork_count: forks,
-          reliability_pct: reliability,
-        });
+        await client.query(
+          `INSERT INTO weekly_summaries (chain, network, week_start, week_end, producer,
+            rounds_scheduled, rounds_produced, rounds_missed,
+            blocks_expected, blocks_produced, blocks_missed,
+            fork_count, reliability_pct)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          ON CONFLICT(chain, network, week_start, producer) DO UPDATE SET
+            rounds_scheduled = EXCLUDED.rounds_scheduled,
+            rounds_produced = EXCLUDED.rounds_produced,
+            rounds_missed = EXCLUDED.rounds_missed,
+            blocks_expected = EXCLUDED.blocks_expected,
+            blocks_produced = EXCLUDED.blocks_produced,
+            blocks_missed = EXCLUDED.blocks_missed,
+            fork_count = EXCLUDED.fork_count,
+            reliability_pct = EXCLUDED.reliability_pct`,
+          [row.chain, row.network, weekStart, weekEnd, row.producer,
+           row.rounds_scheduled, row.rounds_produced, row.rounds_missed,
+           row.blocks_expected, row.blocks_produced, row.blocks_missed,
+           forks, reliability]
+        );
       }
 
-      this.db.exec('COMMIT');
+      await client.query('COMMIT');
       log.info({ producers: rows.length }, 'Weekly summary generated');
     } catch (err) {
-      this.db.exec('ROLLBACK');
+      await client.query('ROLLBACK');
       throw err;
+    } finally {
+      client.release();
     }
   }
 
-  generateMonthlySummary(monthStart: string, monthEnd: string): void {
+  async generateMonthlySummary(monthStart: string, monthEnd: string): Promise<void> {
     log.info({ monthStart, monthEnd }, 'Generating monthly summary');
 
-    this.db.exec('BEGIN');
+    const client = await this.pool.connect();
     try {
-      const rows = this.db.prepare(`
-        SELECT
-          r.chain,
-          r.network,
-          rp.producer,
+      await client.query('BEGIN');
+
+      const rows = (await client.query(
+        `SELECT r.chain, r.network, rp.producer,
           COUNT(DISTINCT r.id) as rounds_scheduled,
           SUM(CASE WHEN rp.blocks_produced > 0 THEN 1 ELSE 0 END) as rounds_produced,
           SUM(CASE WHEN rp.blocks_produced = 0 THEN 1 ELSE 0 END) as rounds_missed,
@@ -119,45 +99,22 @@ export class Summarizer {
           SUM(rp.blocks_missed) as blocks_missed
         FROM round_producers rp
         JOIN rounds r ON rp.round_id = r.id
-        WHERE r.timestamp_start >= ? AND r.timestamp_start < ?
-        GROUP BY r.chain, r.network, rp.producer
-      `).all(monthStart, monthEnd) as any[];
+        WHERE r.timestamp_start >= $1 AND r.timestamp_start < $2
+        GROUP BY r.chain, r.network, rp.producer`,
+        [monthStart, monthEnd]
+      )).rows;
 
-      const forkCounts = this.db.prepare(`
-        SELECT
-          chain, network, original_producer as producer,
-          COUNT(*) as fork_count
-        FROM fork_events
-        WHERE timestamp >= ? AND timestamp < ?
-        GROUP BY chain, network, original_producer
-      `).all(monthStart, monthEnd) as any[];
+      const forkCounts = (await client.query(
+        `SELECT chain, network, original_producer as producer, COUNT(*) as fork_count
+        FROM fork_events WHERE timestamp >= $1 AND timestamp < $2
+        GROUP BY chain, network, original_producer`,
+        [monthStart, monthEnd]
+      )).rows;
 
       const forkMap = new Map<string, number>();
       for (const fc of forkCounts) {
-        forkMap.set(`${fc.chain}:${fc.network}:${fc.producer}`, fc.fork_count);
+        forkMap.set(`${fc.chain}:${fc.network}:${fc.producer}`, parseInt(fc.fork_count));
       }
-
-      const insert = this.db.prepare(`
-        INSERT INTO monthly_summaries (
-          chain, network, month_start, month_end, producer,
-          rounds_scheduled, rounds_produced, rounds_missed,
-          blocks_expected, blocks_produced, blocks_missed,
-          fork_count, reliability_pct
-        ) VALUES (
-          @chain, @network, @month_start, @month_end, @producer,
-          @rounds_scheduled, @rounds_produced, @rounds_missed,
-          @blocks_expected, @blocks_produced, @blocks_missed,
-          @fork_count, @reliability_pct
-        ) ON CONFLICT(chain, network, month_start, producer) DO UPDATE SET
-          rounds_scheduled = excluded.rounds_scheduled,
-          rounds_produced = excluded.rounds_produced,
-          rounds_missed = excluded.rounds_missed,
-          blocks_expected = excluded.blocks_expected,
-          blocks_produced = excluded.blocks_produced,
-          blocks_missed = excluded.blocks_missed,
-          fork_count = excluded.fork_count,
-          reliability_pct = excluded.reliability_pct
-      `);
 
       for (const row of rows) {
         const forks = forkMap.get(`${row.chain}:${row.network}:${row.producer}`) || 0;
@@ -165,32 +122,39 @@ export class Summarizer {
           ? Math.round((row.blocks_produced / row.blocks_expected) * 10000) / 100
           : 100;
 
-        insert.run({
-          chain: row.chain,
-          network: row.network,
-          month_start: monthStart,
-          month_end: monthEnd,
-          producer: row.producer,
-          rounds_scheduled: row.rounds_scheduled,
-          rounds_produced: row.rounds_produced,
-          rounds_missed: row.rounds_missed,
-          blocks_expected: row.blocks_expected,
-          blocks_produced: row.blocks_produced,
-          blocks_missed: row.blocks_missed,
-          fork_count: forks,
-          reliability_pct: reliability,
-        });
+        await client.query(
+          `INSERT INTO monthly_summaries (chain, network, month_start, month_end, producer,
+            rounds_scheduled, rounds_produced, rounds_missed,
+            blocks_expected, blocks_produced, blocks_missed,
+            fork_count, reliability_pct)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          ON CONFLICT(chain, network, month_start, producer) DO UPDATE SET
+            rounds_scheduled = EXCLUDED.rounds_scheduled,
+            rounds_produced = EXCLUDED.rounds_produced,
+            rounds_missed = EXCLUDED.rounds_missed,
+            blocks_expected = EXCLUDED.blocks_expected,
+            blocks_produced = EXCLUDED.blocks_produced,
+            blocks_missed = EXCLUDED.blocks_missed,
+            fork_count = EXCLUDED.fork_count,
+            reliability_pct = EXCLUDED.reliability_pct`,
+          [row.chain, row.network, monthStart, monthEnd, row.producer,
+           row.rounds_scheduled, row.rounds_produced, row.rounds_missed,
+           row.blocks_expected, row.blocks_produced, row.blocks_missed,
+           forks, reliability]
+        );
       }
 
-      this.db.exec('COMMIT');
+      await client.query('COMMIT');
       log.info({ producers: rows.length }, 'Monthly summary generated');
     } catch (err) {
-      this.db.exec('ROLLBACK');
+      await client.query('ROLLBACK');
       throw err;
+    } finally {
+      client.release();
     }
   }
 
-  close(): void {
-    this.db.close();
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }

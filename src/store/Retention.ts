@@ -1,51 +1,45 @@
-import BetterSqlite3 from 'better-sqlite3';
-import path from 'path';
+import pg from 'pg';
 import { logger } from '../utils/logger.js';
 
 const log = logger.child({ module: 'Retention' });
 
 export class Retention {
-  private db: BetterSqlite3.Database;
+  private pool: pg.Pool;
   private retentionDays: number;
 
-  constructor(dataDir: string, retentionDays: number) {
-    const dbPath = path.join(dataDir, 'core-monitor.db');
-    this.db = new BetterSqlite3(dbPath);
+  constructor(connectionString: string, retentionDays: number) {
+    this.pool = new pg.Pool({ connectionString, max: 2 });
     this.retentionDays = retentionDays;
   }
 
-  purgeOldRounds(): number {
-    const cutoff = `-${this.retentionDays} days`;
-    const result = this.db.prepare(`
-      DELETE FROM rounds
-      WHERE created_at < datetime('now', ?)
-    `).run(cutoff);
-
-    const deleted = result.changes;
+  async purgeOldRounds(): Promise<number> {
+    const result = await this.pool.query(
+      `DELETE FROM rounds WHERE created_at < NOW() - ($1 || ' days')::INTERVAL`,
+      [this.retentionDays]
+    );
+    const deleted = result.rowCount || 0;
     if (deleted > 0) {
       log.info({ deleted, retentionDays: this.retentionDays }, 'Purged old rounds');
     }
     return deleted;
   }
 
-  purgeOldScheduleChanges(): number {
-    const cutoff = `-${this.retentionDays} days`;
-    const result = this.db.prepare(`
-      DELETE FROM schedule_changes
-      WHERE created_at < datetime('now', ?)
-    `).run(cutoff);
-    return result.changes;
+  async purgeOldScheduleChanges(): Promise<number> {
+    const result = await this.pool.query(
+      `DELETE FROM schedule_changes WHERE created_at < NOW() - ($1 || ' days')::INTERVAL`,
+      [this.retentionDays]
+    );
+    return result.rowCount || 0;
   }
 
-  runAll(): void {
+  async runAll(): Promise<void> {
     log.info('Starting retention purge');
-    const rounds = this.purgeOldRounds();
-    const schedules = this.purgeOldScheduleChanges();
+    const rounds = await this.purgeOldRounds();
+    const schedules = await this.purgeOldScheduleChanges();
     log.info({ rounds, schedules }, 'Retention purge complete');
-    // Note: missed_block_events and fork_events are kept forever
   }
 
-  close(): void {
-    this.db.close();
+  async close(): Promise<void> {
+    await this.pool.end();
   }
 }
