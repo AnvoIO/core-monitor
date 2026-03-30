@@ -14,8 +14,8 @@ import { ShipClient } from './ship/ShipClient.js';
 import { Database } from './store/Database.js';
 import { createWriteStream, existsSync, readFileSync, unlinkSync } from 'fs';
 import path from 'path';
+import pg from 'pg';
 import type { ShipResult, ShipGetStatusResult } from './ship/types.js';
-import BetterSqlite3 from 'better-sqlite3';
 
 const args = process.argv.slice(2);
 if (args.length < 5) {
@@ -214,38 +214,34 @@ function logProgress() {
   );
 }
 
-// Phase 2: import CSVs
-function importCsvs() {
+// Phase 2: import CSVs into PostgreSQL
+async function importCsvs() {
+  const pgUrl = process.env.POSTGRES_URL;
+  if (!pgUrl) {
+    console.log('\nPhase 2: POSTGRES_URL not set — CSVs saved for manual import.');
+    return;
+  }
+
   console.log('');
-  console.log('Phase 2: Importing CSVs into SQLite...');
+  console.log('Phase 2: Importing CSVs into PostgreSQL...');
 
-  const tempDb = new Database(DATA_DIR);
-  tempDb.close();
-
-  const dbPath = path.join(DATA_DIR, 'core-monitor.db');
-  const raw = new BetterSqlite3(dbPath);
-  raw.pragma('journal_mode = WAL');
-  raw.pragma('synchronous = OFF');
-
-  // Get max existing ID to offset
-  const maxRoundId = (raw.prepare('SELECT COALESCE(MAX(id), 0) as v FROM rounds').get() as any).v;
-  console.log(`  Existing max round ID: ${maxRoundId}`);
+  const db = new Database(pgUrl);
+  await db.init();
+  const pool = new pg.Pool({ connectionString: pgUrl, max: 2 });
+  const idMap = new Map<number, number>();
 
   if (existsSync(roundsCsv)) {
     console.log('  Importing rounds...');
     const lines = readFileSync(roundsCsv, 'utf8').split('\n').filter(Boolean);
-    const stmt = raw.prepare(
-      'INSERT INTO rounds (id,chain,network,round_number,schedule_version,timestamp_start,timestamp_end,producers_scheduled,producers_produced,producers_missed,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
-    );
-    const batch = raw.transaction((rows: string[]) => {
-      for (const line of rows) {
-        const p = line.split(',');
-        stmt.run(parseInt(p[0]) + maxRoundId, p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10]);
-      }
-    });
-    const chunkSize = 50000;
-    for (let i = 0; i < lines.length; i += chunkSize) {
-      batch(lines.slice(i, i + chunkSize));
+    for (const line of lines) {
+      const p = line.split(',');
+      const csvId = parseInt(p[0]);
+      const result = await pool.query(
+        `INSERT INTO rounds (chain,network,round_number,schedule_version,timestamp_start,timestamp_end,producers_scheduled,producers_produced,producers_missed,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+        [p[1], p[2], parseInt(p[3]), parseInt(p[4]), p[5], p[6], parseInt(p[7]), parseInt(p[8]), parseInt(p[9]), p[10]]
+      );
+      idMap.set(csvId, result.rows[0].id);
     }
     console.log(`    ${lines.length.toLocaleString()} rounds imported`);
   }
@@ -253,18 +249,15 @@ function importCsvs() {
   if (existsSync(rpCsv)) {
     console.log('  Importing round producers...');
     const lines = readFileSync(rpCsv, 'utf8').split('\n').filter(Boolean);
-    const stmt = raw.prepare(
-      'INSERT INTO round_producers (round_id,producer,position,blocks_expected,blocks_produced,blocks_missed,first_block,last_block) VALUES (?,?,?,?,?,?,?,?)'
-    );
-    const batch = raw.transaction((rows: string[]) => {
-      for (const line of rows) {
-        const p = line.split(',');
-        stmt.run(parseInt(p[0]) + maxRoundId, p[1], parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]), p[6] || null, p[7] || null);
-      }
-    });
-    const chunkSize = 50000;
-    for (let i = 0; i < lines.length; i += chunkSize) {
-      batch(lines.slice(i, i + chunkSize));
+    for (const line of lines) {
+      const p = line.split(',');
+      const dbRoundId = idMap.get(parseInt(p[0]));
+      if (!dbRoundId) continue;
+      await pool.query(
+        `INSERT INTO round_producers (round_id,producer,position,blocks_expected,blocks_produced,blocks_missed,first_block,last_block)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [dbRoundId, p[1], parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]), p[6] || null, p[7] || null]
+      );
     }
     console.log(`    ${lines.length.toLocaleString()} round_producers imported`);
   }
@@ -272,18 +265,14 @@ function importCsvs() {
   if (existsSync(missedCsv)) {
     console.log('  Importing missed block events...');
     const lines = readFileSync(missedCsv, 'utf8').split('\n').filter(Boolean);
-    const stmt = raw.prepare(
-      'INSERT INTO missed_block_events (chain,network,producer,round_id,blocks_missed,block_number,timestamp,created_at) VALUES (?,?,?,?,?,?,?,?)'
-    );
-    const batch = raw.transaction((rows: string[]) => {
-      for (const line of rows) {
-        const p = line.split(',');
-        stmt.run(p[0], p[1], p[2], parseInt(p[3]) + maxRoundId, parseInt(p[4]), p[5] || null, p[6], p[7]);
-      }
-    });
-    const chunkSize = 50000;
-    for (let i = 0; i < lines.length; i += chunkSize) {
-      batch(lines.slice(i, i + chunkSize));
+    for (const line of lines) {
+      const p = line.split(',');
+      const dbRoundId = idMap.get(parseInt(p[3]));
+      await pool.query(
+        `INSERT INTO missed_block_events (chain,network,producer,round_id,blocks_missed,block_number,timestamp,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [p[0], p[1], p[2], dbRoundId || null, parseInt(p[4]), p[5] || null, p[6], p[7]]
+      );
     }
     console.log(`    ${lines.length.toLocaleString()} missed events imported`);
   }
@@ -301,31 +290,33 @@ function importCsvs() {
         current += ch;
       }
       parts.push(current);
-      raw.prepare(
-        'INSERT INTO schedule_changes (chain,network,schedule_version,producers_added,producers_removed,producer_list,block_number,timestamp,created_at) VALUES (?,?,?,?,?,?,?,?,?)'
-      ).run(...parts);
+      await pool.query(
+        `INSERT INTO schedule_changes (chain,network,schedule_version,producers_added,producers_removed,producer_list,block_number,timestamp,created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, parts
+      );
     }
     console.log(`    ${lines.length} schedule changes imported`);
   }
 
   // Save state
-  const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  const stateStmt = raw.prepare(
-    'INSERT OR REPLACE INTO monitor_state (chain,network,key,value,updated_at) VALUES (?,?,?,?,?)'
-  );
-  stateStmt.run(chain, network, 'last_block', String(currentBlockNum), now);
-  stateStmt.run(chain, network, 'current_global_round', String(currentRound), now);
-  stateStmt.run(chain, network, 'schedule_activation_global_round', String(scheduleActivationGlobalRound), now);
-  stateStmt.run(chain, network, 'last_schedule_version', String(scheduleVersion), now);
-  if (firstCompleteRound >= 0) {
-    stateStmt.run(chain, network, 'first_complete_round', String(firstCompleteRound), now);
-  }
+  const setState = async (key: string, value: string) => {
+    await pool.query(
+      `INSERT INTO monitor_state (chain,network,key,value,updated_at) VALUES ($1,$2,$3,$4,NOW())
+       ON CONFLICT(chain,network,key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
+      [chain, network, key, value]
+    );
+  };
+  await setState('last_block', String(currentBlockNum));
+  await setState('current_global_round', String(currentRound));
+  await setState('schedule_activation_global_round', String(scheduleActivationGlobalRound));
+  if (firstCompleteRound >= 0) await setState('first_complete_round', String(firstCompleteRound));
   if (scheduleProducers.length > 0) {
-    stateStmt.run(chain, network, 'schedule', JSON.stringify({ version: scheduleVersion, producers: scheduleProducers }), now);
+    await setState('schedule', JSON.stringify({ version: scheduleVersion, producers: scheduleProducers }));
   }
   console.log('  State saved');
 
-  raw.close();
+  await pool.end();
+  await db.close();
 
   for (const f of [roundsCsv, rpCsv, missedCsv, scheduleCsv]) {
     if (existsSync(f)) unlinkSync(f);
@@ -397,8 +388,20 @@ function finish() {
 
   ship.disconnect();
 
-  setTimeout(() => {
-    importCsvs();
+  setTimeout(async () => {
+    if (process.env.POSTGRES_URL) {
+      await importCsvs();
+    } else {
+      console.log('');
+      console.log('CSV files ready for import:');
+      console.log(`  ${roundsCsv}`);
+      console.log(`  ${rpCsv}`);
+      console.log(`  ${missedCsv}`);
+      console.log(`  ${scheduleCsv}`);
+      console.log('');
+      console.log('Run the import script on the target host:');
+      console.log(`  POSTGRES_URL=... npx tsx src/import-csv.ts ${chain} ${network} data/`);
+    }
     const totalElapsed = (Date.now() - startTime) / 1000;
     console.log('');
     console.log(`Total time: ${Math.floor(totalElapsed / 60)}m ${Math.floor(totalElapsed % 60)}s`);
