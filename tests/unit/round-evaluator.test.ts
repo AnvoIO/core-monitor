@@ -258,7 +258,7 @@ describe('RoundEvaluator (slot-based)', () => {
     evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
     const first = db.getState('libre', 'mainnet', 'first_complete_round');
-    expect(first).toBe('100');
+    expect(first).toBe('100'); // global round, no activation offset set
   });
 
   it('should persist state for restart', () => {
@@ -266,12 +266,27 @@ describe('RoundEvaluator (slot-based)', () => {
     const slot = 101 * SLOTS_PER_ROUND;
     evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
-    const savedRound = db.getState('libre', 'mainnet', 'current_round');
+    const savedRound = db.getState('libre', 'mainnet', 'current_global_round');
     expect(savedRound).toBe('101');
 
-    // New evaluator should restore
     const evaluator2 = new RoundEvaluator(chainConfig, db, schedule);
+    // display round = globalRound - activationGlobalRound = 101 - 0 = 101
     expect(evaluator2.round).toBe(101);
+  });
+
+  it('should produce schedule-relative round numbers when activation is set', () => {
+    // Set activation at global round 90
+    const activationSlot = 90 * SLOTS_PER_ROUND;
+    evaluator.setScheduleActivation(slotToTimestamp(activationSlot));
+
+    feedBlocks(generateRound(100, 1));
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
+
+    expect(result).not.toBeNull();
+    // Display round = 100 - 90 = 10
+    expect(result!.roundNumber).toBe(10);
+    expect(evaluator.round).toBe(11); // current is 101 - 90
   });
 
   it('should handle skipped rounds (long outage)', () => {

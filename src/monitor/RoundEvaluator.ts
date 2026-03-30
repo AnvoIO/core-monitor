@@ -39,33 +39,24 @@ export interface ProducerRoundResult {
  * Calculate the slot number from a block timestamp.
  * Antelope uses 0.5s slots from epoch 2000-01-01T00:00:00.
  */
-function timestampToSlot(timestamp: string): number {
+export function timestampToSlot(timestamp: string): number {
   const ms = new Date(timestamp).getTime();
   return Math.floor((ms - ANTELOPE_EPOCH_MS) / 500);
 }
 
 /**
- * Calculate which round a slot belongs to.
- * round = floor(slot / (scheduleSize * blocksPerBp))
+ * Calculate the global round number for a slot.
  */
-function slotToRound(slot: number, scheduleSize: number, blocksPerBp: number): number {
+function slotToGlobalRound(slot: number, scheduleSize: number, blocksPerBp: number): number {
   return Math.floor(slot / (scheduleSize * blocksPerBp));
-}
-
-/**
- * Calculate which producer position a slot maps to.
- * position = floor((slot % (scheduleSize * blocksPerBp)) / blocksPerBp)
- */
-function slotToProducerPosition(slot: number, scheduleSize: number, blocksPerBp: number): number {
-  const slotsPerRound = scheduleSize * blocksPerBp;
-  return Math.floor((slot % slotsPerRound) / blocksPerBp);
 }
 
 export class RoundEvaluator {
   private config: ChainConfig;
   private db: Database;
   private schedule: ScheduleTracker;
-  private currentRound: number = -1;
+  private currentGlobalRound: number = -1;
+  private scheduleActivationGlobalRound: number = 0;
   private lastBlockNum: number = 0;
 
   // Accumulate blocks per-producer for the current round
@@ -82,58 +73,83 @@ export class RoundEvaluator {
     const savedBlock = this.db.getState(config.chain, config.network, 'last_block');
     this.lastBlockNum = savedBlock ? parseInt(savedBlock, 10) : 0;
 
-    const savedRound = this.db.getState(config.chain, config.network, 'current_round');
-    this.currentRound = savedRound ? parseInt(savedRound, 10) : -1;
+    const savedGlobalRound = this.db.getState(config.chain, config.network, 'current_global_round');
+    this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
+
+    const savedActivation = this.db.getState(config.chain, config.network, 'schedule_activation_global_round');
+    this.scheduleActivationGlobalRound = savedActivation ? parseInt(savedActivation, 10) : 0;
 
     log.info(
-      { chain: config.chain, network: config.network, round: this.currentRound, lastBlock: this.lastBlockNum },
+      {
+        chain: config.chain, network: config.network,
+        globalRound: this.currentGlobalRound,
+        scheduleRound: this.displayRound,
+        lastBlock: this.lastBlockNum,
+      },
       'RoundEvaluator initialized'
     );
   }
 
-  get round(): number {
-    return this.currentRound;
+  /** The schedule-relative round number for display */
+  get displayRound(): number {
+    if (this.currentGlobalRound < 0) return 0;
+    return this.currentGlobalRound - this.scheduleActivationGlobalRound;
   }
 
-  setRound(round: number): void {
-    this.currentRound = round;
+  /** Alias for external consumers */
+  get round(): number {
+    return this.displayRound;
+  }
+
+  /**
+   * Set the schedule activation point. Called when a schedule change is detected.
+   * The activation timestamp determines the round offset for display.
+   */
+  setScheduleActivation(activationTimestamp: string): void {
+    const slot = timestampToSlot(activationTimestamp);
+    this.scheduleActivationGlobalRound = slotToGlobalRound(
+      slot, this.config.scheduleSize, this.config.blocksPerBp
+    );
     this.db.setState(
-      this.config.chain,
-      this.config.network,
-      'current_round',
-      String(round)
+      this.config.chain, this.config.network,
+      'schedule_activation_global_round',
+      String(this.scheduleActivationGlobalRound)
     );
     log.info(
-      { chain: this.config.chain, network: this.config.network, round },
-      'Round number set from external source'
+      {
+        chain: this.config.chain, network: this.config.network,
+        activationTimestamp,
+        activationGlobalRound: this.scheduleActivationGlobalRound,
+      },
+      'Schedule activation point set'
     );
   }
 
   processBlock(block: BlockRecord): RoundResult | null {
     const { producer, block_num, timestamp } = block;
     const slot = timestampToSlot(timestamp);
-    const blockRound = slotToRound(slot, this.config.scheduleSize, this.config.blocksPerBp);
+    const globalRound = slotToGlobalRound(slot, this.config.scheduleSize, this.config.blocksPerBp);
 
     // First block ever — initialize
-    if (this.currentRound === -1) {
-      this.currentRound = blockRound;
+    if (this.currentGlobalRound === -1) {
+      this.currentGlobalRound = globalRound;
       this.roundStartTimestamp = timestamp;
       this.roundBlocks.clear();
     }
 
     // Did we cross into a new round?
-    if (blockRound > this.currentRound) {
+    if (globalRound > this.currentGlobalRound) {
       // Evaluate the completed round
       const result = this.evaluateRound();
 
       // Advance to new round
-      this.currentRound = blockRound;
+      this.currentGlobalRound = globalRound;
       this.roundBlocks.clear();
       this.roundStartTimestamp = timestamp;
       this.roundEndTimestamp = '';
 
       // Save state
-      this.db.setState(this.config.chain, this.config.network, 'current_round', String(this.currentRound));
+      this.db.setState(this.config.chain, this.config.network, 'current_global_round', String(this.currentGlobalRound));
 
       // Add this block to the new round
       this.addBlock(producer, block_num);
@@ -168,11 +184,11 @@ export class RoundEvaluator {
     const producerResults: ProducerRoundResult[] = [];
     let producersProduced = 0;
     let producersMissed = 0;
+    const displayRound = this.currentGlobalRound - this.scheduleActivationGlobalRound;
 
     if (producers.length === 0) {
-      // No schedule — can't evaluate
       return {
-        roundNumber: this.currentRound,
+        roundNumber: displayRound,
         scheduleVersion: this.schedule.version,
         timestampStart: this.roundStartTimestamp,
         timestampEnd: this.roundEndTimestamp,
@@ -206,7 +222,7 @@ export class RoundEvaluator {
     }
 
     const roundResult: RoundResult = {
-      roundNumber: this.currentRound,
+      roundNumber: displayRound,
       scheduleVersion: this.schedule.version,
       timestampStart: this.roundStartTimestamp,
       timestampEnd: this.roundEndTimestamp,
@@ -222,10 +238,9 @@ export class RoundEvaluator {
     const firstRound = this.db.getState(this.config.chain, this.config.network, 'first_complete_round');
     if (!firstRound) {
       this.db.setState(
-        this.config.chain,
-        this.config.network,
+        this.config.chain, this.config.network,
         'first_complete_round',
-        String(this.currentRound)
+        String(displayRound)
       );
     }
 
@@ -233,7 +248,8 @@ export class RoundEvaluator {
       {
         chain: this.config.chain,
         network: this.config.network,
-        round: this.currentRound,
+        scheduleRound: displayRound,
+        globalRound: this.currentGlobalRound,
         produced: producersProduced,
         missed: producersMissed,
         scheduleVersion: this.schedule.version,

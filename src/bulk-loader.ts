@@ -41,9 +41,11 @@ function timestampToSlot(timestamp: string): number {
   return Math.floor((new Date(timestamp).getTime() - ANTELOPE_EPOCH_MS) / 500);
 }
 
-function slotToRound(slot: number): number {
+function slotToGlobalRound(slot: number): number {
   return Math.floor(slot / SLOTS_PER_ROUND);
 }
+
+let scheduleActivationGlobalRound = 0;
 
 console.log(`AnvoIO Core Monitor — Bulk Loader (CSV + slot-based)`);
 console.log(`Chain: ${chain} ${network}`);
@@ -96,6 +98,7 @@ function writeRound() {
   if (scheduleProducers.length === 0) return;
 
   const roundId = roundIdCounter++;
+  const displayRound = currentRound - scheduleActivationGlobalRound;
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
   const producersData = scheduleProducers.map((p, i) => {
@@ -109,7 +112,7 @@ function writeRound() {
   const producersMissed = producersData.filter(p => p.produced === 0).length;
 
   roundsStream.write(
-    `${roundId},${chain},${network},${currentRound},${scheduleVersion},${roundStartTimestamp},${roundEndTimestamp},${scheduleProducers.length},${producersProduced},${producersMissed},${now}\n`
+    `${roundId},${chain},${network},${displayRound},${scheduleVersion},${roundStartTimestamp},${roundEndTimestamp},${scheduleProducers.length},${producersProduced},${producersMissed},${now}\n`
   );
 
   for (const p of producersData) {
@@ -129,7 +132,7 @@ function writeRound() {
   }
 
   roundsWritten++;
-  if (firstCompleteRound < 0) firstCompleteRound = currentRound;
+  if (firstCompleteRound < 0) firstCompleteRound = displayRound;
 }
 
 function processBlock(blockNum: number, producer: string, timestamp: string, sv: number, newProducers?: any) {
@@ -150,6 +153,8 @@ function processBlock(blockNum: number, producer: string, timestamp: string, sv:
 
       console.log(`Schedule v${scheduleVersion} -> v${v} (${scheduleProducers.length} producers) at block ${blockNum.toLocaleString()}`);
       scheduleVersion = v;
+      // Update schedule activation point for display round offset
+      scheduleActivationGlobalRound = slotToGlobalRound(timestampToSlot(timestamp));
     }
   }
 
@@ -157,7 +162,7 @@ function processBlock(blockNum: number, producer: string, timestamp: string, sv:
 
   // Slot-based round detection
   const slot = timestampToSlot(timestamp);
-  const blockRound = slotToRound(slot);
+  const blockRound = slotToGlobalRound(slot);
 
   if (currentRound === -1) {
     currentRound = blockRound;
@@ -309,7 +314,8 @@ function importCsvs() {
     'INSERT OR REPLACE INTO monitor_state (chain,network,key,value,updated_at) VALUES (?,?,?,?,?)'
   );
   stateStmt.run(chain, network, 'last_block', String(currentBlockNum), now);
-  stateStmt.run(chain, network, 'current_round', String(currentRound), now);
+  stateStmt.run(chain, network, 'current_global_round', String(currentRound), now);
+  stateStmt.run(chain, network, 'schedule_activation_global_round', String(scheduleActivationGlobalRound), now);
   stateStmt.run(chain, network, 'last_schedule_version', String(scheduleVersion), now);
   if (firstCompleteRound >= 0) {
     stateStmt.run(chain, network, 'first_complete_round', String(firstCompleteRound), now);

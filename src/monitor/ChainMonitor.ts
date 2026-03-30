@@ -100,6 +100,10 @@ export class ChainMonitor extends EventEmitter {
 
       if (active && active.producers && active.producers.length > 0) {
         const version = active.version;
+        const producers = active.producers.map((p: any) => ({
+          producer_name: p.producer_name,
+          block_signing_key: p.block_signing_key || p.authority?.[1]?.keys?.[0]?.key || 'unknown',
+        }));
 
         // Try to get schedule activation timestamp from Hyperion
         let activationTimestamp: string | null = null;
@@ -109,39 +113,19 @@ export class ChainMonitor extends EventEmitter {
 
         const timestamp = activationTimestamp || new Date().toISOString();
 
-        this.schedule.updateSchedule(
-          version,
-          active.producers.map((p: any) => ({
-            producer_name: p.producer_name,
-            block_signing_key: p.block_signing_key || p.authority?.[1]?.keys?.[0]?.key || 'unknown',
-          })),
-          0,
-          timestamp
-        );
+        this.schedule.updateSchedule(version, producers, 0, timestamp);
 
-        // Calculate accurate round number if we have the activation timestamp
+        // Set schedule activation point for round numbering
         if (activationTimestamp) {
-          const activationTime = new Date(activationTimestamp).getTime();
-          const now = Date.now();
-          const elapsedMs = now - activationTime;
-          const blocksPerRound = this.config.scheduleSize * this.config.blocksPerBp;
-          const roundDurationMs = blocksPerRound * this.config.blockTimeMs;
-          const currentRound = Math.floor(elapsedMs / roundDurationMs);
-
-          this.roundEvaluator.setRound(currentRound);
+          this.roundEvaluator.setScheduleActivation(activationTimestamp);
           this.log.info(
-            {
-              version,
-              producers: active.producers.length,
-              activationTimestamp,
-              calculatedRound: currentRound,
-            },
-            'Schedule bootstrapped with accurate round number from Hyperion'
+            { version, producers: producers.length, activationTimestamp },
+            'Schedule bootstrapped from RPC + Hyperion'
           );
         } else {
           this.log.info(
-            { version, producers: active.producers.length },
-            'Schedule bootstrapped from RPC (no Hyperion data for round calculation)'
+            { version, producers: producers.length },
+            'Schedule bootstrapped from RPC (no activation timestamp — rounds will be global)'
           );
         }
       }
@@ -239,6 +223,9 @@ export class ChainMonitor extends EventEmitter {
         block.timestamp
       );
       if (changed) {
+        // Set the activation point for schedule-relative round numbering
+        this.roundEvaluator.setScheduleActivation(block.timestamp);
+
         this.emit('schedule_change', {
           chain: this.config.chain,
           network: this.config.network,

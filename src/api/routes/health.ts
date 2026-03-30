@@ -15,11 +15,11 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
       '/api/v1/:chain/:network/status',
       async (request) => {
         const { chain, network } = request.params;
-        const currentRound = db.getState(chain, network, 'current_round');
+        const currentGlobalRound = db.getState(chain, network, 'current_global_round');
+        const activationGlobalRound = db.getState(chain, network, 'schedule_activation_global_round');
         const firstCompleteRound = db.getState(chain, network, 'first_complete_round');
         const lastBlock = db.getState(chain, network, 'last_block');
         const scheduleJson = db.getState(chain, network, 'schedule');
-        const lastScheduleVersion = db.getState(chain, network, 'last_schedule_version');
 
         let schedule = null;
         if (scheduleJson) {
@@ -28,13 +28,17 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
           } catch {}
         }
 
+        const globalRound = currentGlobalRound ? parseInt(currentGlobalRound, 10) : 0;
+        const activationRound = activationGlobalRound ? parseInt(activationGlobalRound, 10) : 0;
+        const displayRound = globalRound - activationRound;
+
         return {
           chain,
           network,
-          currentRound: currentRound ? parseInt(currentRound, 10) : 0,
+          currentRound: displayRound,
           firstCompleteRound: firstCompleteRound ? parseInt(firstCompleteRound, 10) : null,
           lastBlock: lastBlock ? parseInt(lastBlock, 10) : 0,
-          scheduleVersion: lastScheduleVersion ? parseInt(lastScheduleVersion, 10) : 0,
+          scheduleVersion: schedule?.version ?? 0,
           producerCount: schedule?.producers?.length ?? 0,
         };
       }
