@@ -14,18 +14,27 @@ const log = logger.child({ module: 'API' });
 
 export async function createServer(config: AppConfig, db: Database) {
   const app = Fastify({
-    logger: false,
+    logger: logger,
   });
 
-  // CORS for dashboard
+  // CORS — configurable via API_CORS_ORIGIN env var (default: *)
+  const corsOrigin = config.api.corsOrigin;
   app.addHook('onSend', async (request, reply) => {
-    reply.header('Access-Control-Allow-Origin', '*');
+    reply.header('Access-Control-Allow-Origin', corsOrigin);
     reply.header('Access-Control-Allow-Methods', 'GET');
     reply.header('Access-Control-Allow-Headers', 'Content-Type');
   });
 
+  // Custom error handler — avoid leaking internals
+  app.setErrorHandler(async (error: any, request, reply) => {
+    log.error({ err: error, url: request.url }, 'Request error');
+    const statusCode = error.statusCode || 500;
+    reply.status(statusCode).send({
+      error: statusCode === 404 ? 'Not Found' : 'Internal Server Error',
+    });
+  });
+
   // Serve static dashboard files
-  // In CJS mode, __dirname is available natively
   const staticDir = path.resolve(__dirname, 'static');
   await app.register(fastifyStatic, {
     root: staticDir,

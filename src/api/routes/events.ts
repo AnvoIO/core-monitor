@@ -23,10 +23,10 @@ export async function eventRoutes(
     async (request) => {
       const { chain, network } = request.params;
       const type = request.query.type || 'all';
-      const limit = Math.min(parseInt(request.query.limit || '50', 10), 500);
-      const offset = parseInt(request.query.offset || '0', 10);
-      const since = request.query.since || null;
-      const until = request.query.until || null;
+      const limit = Math.max(1, Math.min(parseInt(request.query.limit || '50', 10) || 50, 500));
+      const offset = Math.max(0, parseInt(request.query.offset || '0', 10) || 0);
+      const since = request.query.since && /^\d{4}-\d{2}-\d{2}/.test(request.query.since) ? request.query.since : null;
+      const until = request.query.until && /^\d{4}-\d{2}-\d{2}/.test(request.query.until) ? request.query.until : null;
 
       const result: Record<string, any> = { chain, network, type, limit, offset };
 

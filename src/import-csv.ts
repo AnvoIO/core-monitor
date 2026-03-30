@@ -1,6 +1,10 @@
 /**
  * Import CSV files from bulk loader into PostgreSQL.
  *
+ * Note: CSV files are read entirely into memory. For very large imports
+ * (millions of rows), consider using PostgreSQL COPY or streaming reads.
+ * This is acceptable for the CLI tool's typical use.
+ *
  * Usage:
  *   POSTGRES_URL=postgresql://... npx tsx src/import-csv.ts <chain> <network> <csv_dir>
  */
