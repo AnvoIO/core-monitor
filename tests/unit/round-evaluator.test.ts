@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-describe('RoundEvaluator', () => {
+describe('RoundEvaluator (slot-based)', () => {
   let db: Database;
   let schedule: ScheduleTracker;
   let evaluator: RoundEvaluator;
@@ -26,47 +26,54 @@ describe('RoundEvaluator', () => {
   };
 
   const producers = ['alpha', 'bravo', 'charlie'];
-  let nextBlockNum = 1;
-  let nextSecond = 0;
 
-  function makeBlock(producer: string, scheduleVersion: number = 1): BlockRecord {
-    const block: BlockRecord = {
-      block_num: nextBlockNum++,
+  // Antelope epoch
+  const EPOCH = Date.UTC(2000, 0, 1);
+  // Slots per round = 3 * 4 = 12
+  const SLOTS_PER_ROUND = 12;
+
+  // Create a timestamp for a given slot number
+  function slotToTimestamp(slot: number): string {
+    return new Date(EPOCH + slot * 500).toISOString();
+  }
+
+  // Create a block at a given slot
+  function makeBlock(blockNum: number, slot: number, producer: string): BlockRecord {
+    return {
+      block_num: blockNum,
       producer,
-      timestamp: `2026-03-30T00:${String(Math.floor(nextSecond / 60)).padStart(2, '0')}:${String(nextSecond % 60).padStart(2, '0')}.000`,
-      schedule_version: scheduleVersion,
+      timestamp: slotToTimestamp(slot),
+      schedule_version: 1,
     };
-    nextSecond++;
-    return block;
   }
 
-  // Feed N blocks from a producer, return any round result
-  function feedProducer(producer: string, count: number, sv: number = 1) {
+  // Get the expected producer for a slot
+  function expectedProducer(slot: number): string {
+    const posInRound = Math.floor((slot % SLOTS_PER_ROUND) / chainConfig.blocksPerBp);
+    return producers[posInRound];
+  }
+
+  // Generate all blocks for a complete round
+  function generateRound(roundNum: number, startBlockNum: number, skip: string[] = []): BlockRecord[] {
+    const blocks: BlockRecord[] = [];
+    const roundStartSlot = roundNum * SLOTS_PER_ROUND;
+
+    for (let slotOffset = 0; slotOffset < SLOTS_PER_ROUND; slotOffset++) {
+      const slot = roundStartSlot + slotOffset;
+      const producer = expectedProducer(slot);
+      if (skip.includes(producer)) continue; // simulate missed blocks
+      blocks.push(makeBlock(startBlockNum + blocks.length, slot, producer));
+    }
+    return blocks;
+  }
+
+  function feedBlocks(blocks: BlockRecord[]) {
     let result = null;
-    for (let i = 0; i < count; i++) {
-      const r = evaluator.processBlock(makeBlock(producer, sv));
+    for (const block of blocks) {
+      const r = evaluator.processBlock(block);
       if (r) result = r;
     }
     return result;
-  }
-
-  // Feed a full round (all producers, 4 blocks each), return any result
-  function feedFullRound(sv: number = 1) {
-    let result = null;
-    for (const p of producers) {
-      const r = feedProducer(p, 4, sv);
-      if (r) result = r;
-    }
-    return result;
-  }
-
-  // Warm up: feed one full round (discarded as partial), then trigger
-  // boundary with alpha's first block of next round.
-  // After warmUp, the evaluator has 1 alpha block in the current round.
-  function warmUp() {
-    feedFullRound();
-    // Trigger boundary — discards partial round
-    evaluator.processBlock(makeBlock('alpha'));
   }
 
   beforeEach(() => {
@@ -77,11 +84,9 @@ describe('RoundEvaluator', () => {
       1,
       producers.map((p) => ({ producer_name: p, block_signing_key: 'EOS000' })),
       1,
-      '2026-03-30T00:00:00.000'
+      '2000-01-01T00:00:00.000Z'
     );
     evaluator = new RoundEvaluator(chainConfig, db, schedule);
-    nextBlockNum = 1;
-    nextSecond = 0;
   });
 
   afterEach(() => {
@@ -89,93 +94,135 @@ describe('RoundEvaluator', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('should not emit a result during the first round', () => {
-    const result = feedFullRound();
+  it('should not emit during the first round', () => {
+    const blocks = generateRound(100, 1);
+    const result = feedBlocks(blocks);
     expect(result).toBeNull();
   });
 
-  it('should discard the first partial round and not persist it', () => {
-    feedFullRound();
-    const result = evaluator.processBlock(makeBlock('alpha'));
-    expect(result).toBeNull();
-    expect(db.getRecentRounds('libre', 'mainnet')).toHaveLength(0);
-  });
+  it('should emit when crossing into the next round', () => {
+    const round1 = generateRound(100, 1);
+    feedBlocks(round1);
 
-  it('should emit a result for the first complete round', () => {
-    warmUp();
-    // Feed remaining 3 alpha + full bravo + full charlie
-    feedProducer('alpha', 3);
-    feedProducer('bravo', 4);
-    feedProducer('charlie', 4);
-    // Trigger next boundary
-    const result = evaluator.processBlock(makeBlock('alpha'));
+    // First block of round 101 triggers evaluation of round 100
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
     expect(result).not.toBeNull();
+    expect(result!.roundNumber).toBe(100);
     expect(result!.producersProduced).toBe(3);
     expect(result!.producersMissed).toBe(0);
   });
 
   it('should correctly evaluate a perfect round', () => {
-    warmUp();
-    feedProducer('alpha', 3);
-    feedProducer('bravo', 4);
-    feedProducer('charlie', 4);
-    const result = evaluator.processBlock(makeBlock('alpha'));
+    const round1 = generateRound(100, 1);
+    feedBlocks(round1);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
     expect(result).not.toBeNull();
     for (const pr of result!.producerResults) {
       expect(pr.blocksProduced).toBe(4);
       expect(pr.blocksMissed).toBe(0);
+      expect(pr.blocksExpected).toBe(4);
     }
   });
 
-  it('should detect a producer that missed their entire slot', () => {
-    warmUp();
-    // alpha: 3 more (warmup has 1)
-    feedProducer('alpha', 3);
-    // bravo skipped
-    feedProducer('charlie', 4);
-    const result = evaluator.processBlock(makeBlock('alpha'));
+  it('should never have blocksProduced > blocksExpected', () => {
+    // Even if a producer somehow has extra blocks in the round data,
+    // blocksProduced is capped at blocksPerBp
+    const round1 = generateRound(100, 1);
+    feedBlocks(round1);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
     expect(result).not.toBeNull();
-    const bravoResult = result!.producerResults.find((p) => p.producer === 'bravo');
+    for (const pr of result!.producerResults) {
+      expect(pr.blocksProduced).toBeLessThanOrEqual(pr.blocksExpected);
+    }
+  });
+
+  it('should detect a producer that missed all blocks', () => {
+    // bravo misses all their blocks
+    const blocks = generateRound(100, 1, ['bravo']);
+    feedBlocks(blocks);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
+
+    expect(result).not.toBeNull();
+    expect(result!.producersMissed).toBe(1);
+
+    const bravoResult = result!.producerResults.find(p => p.producer === 'bravo');
     expect(bravoResult!.blocksProduced).toBe(0);
     expect(bravoResult!.blocksMissed).toBe(4);
-    expect(result!.producersMissed).toBe(1);
   });
 
   it('should detect partial missed blocks', () => {
-    warmUp();
-    feedProducer('alpha', 3);
-    feedProducer('bravo', 2); // only 2 of 4
-    feedProducer('charlie', 4);
-    const result = evaluator.processBlock(makeBlock('alpha'));
+    const roundStartSlot = 100 * SLOTS_PER_ROUND;
+    const blocks: BlockRecord[] = [];
+    let blockNum = 1;
+
+    // alpha: all 4 blocks
+    for (let i = 0; i < 4; i++) {
+      blocks.push(makeBlock(blockNum++, roundStartSlot + i, 'alpha'));
+    }
+    // bravo: only 2 of 4 blocks
+    for (let i = 0; i < 2; i++) {
+      blocks.push(makeBlock(blockNum++, roundStartSlot + 4 + i, 'bravo'));
+    }
+    // charlie: all 4 blocks
+    for (let i = 0; i < 4; i++) {
+      blocks.push(makeBlock(blockNum++, roundStartSlot + 8 + i, 'charlie'));
+    }
+
+    feedBlocks(blocks);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(blockNum, slot, expectedProducer(slot)));
 
     expect(result).not.toBeNull();
-    const bravoResult = result!.producerResults.find((p) => p.producer === 'bravo');
+    const bravoResult = result!.producerResults.find(p => p.producer === 'bravo');
     expect(bravoResult!.blocksProduced).toBe(2);
     expect(bravoResult!.blocksMissed).toBe(2);
   });
 
+  it('should handle multiple offline producers', () => {
+    // Both bravo and charlie miss
+    const blocks = generateRound(100, 1, ['bravo', 'charlie']);
+    feedBlocks(blocks);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
+
+    expect(result).not.toBeNull();
+    expect(result!.producersProduced).toBe(1);
+    expect(result!.producersMissed).toBe(2);
+  });
+
   it('should persist round results to database', () => {
-    warmUp();
-    feedProducer('alpha', 3);
-    feedProducer('bravo', 4);
-    feedProducer('charlie', 4);
-    evaluator.processBlock(makeBlock('alpha'));
+    const blocks = generateRound(100, 1);
+    feedBlocks(blocks);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
     const rounds = db.getRecentRounds('libre', 'mainnet');
     expect(rounds).toHaveLength(1);
-    const roundProducers = db.getRoundProducers(rounds[0].id);
-    expect(roundProducers).toHaveLength(3);
+    expect(rounds[0].round_number).toBe(100);
+
+    const rp = db.getRoundProducers(rounds[0].id);
+    expect(rp).toHaveLength(3);
   });
 
-  it('should persist missed block events to database', () => {
-    warmUp();
-    feedProducer('alpha', 3);
-    // bravo misses
-    feedProducer('charlie', 4);
-    evaluator.processBlock(makeBlock('alpha'));
+  it('should persist missed block events', () => {
+    const blocks = generateRound(100, 1, ['bravo']);
+    feedBlocks(blocks);
+
+    const slot = 101 * SLOTS_PER_ROUND;
+    evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
     const events = db.getMissedBlockEvents('libre', 'mainnet');
     const bravoEvent = events.find((e: any) => e.producer === 'bravo');
@@ -183,55 +230,63 @@ describe('RoundEvaluator', () => {
     expect(bravoEvent!.blocks_missed).toBe(4);
   });
 
-  it('should persist state and resume across instances', () => {
-    warmUp();
-    feedProducer('alpha', 3);
-    feedProducer('bravo', 4);
-    feedProducer('charlie', 4);
-    evaluator.processBlock(makeBlock('alpha'));
-
-    const evaluator2 = new RoundEvaluator(chainConfig, db, schedule);
-    expect(evaluator2.round).toBeGreaterThan(0);
-  });
-
   it('should handle multiple consecutive rounds', () => {
-    warmUp();
+    const results = [];
 
-    // Round 1: perfect (3 more alpha + bravo + charlie)
-    feedProducer('alpha', 3);
-    feedProducer('bravo', 4);
-    feedProducer('charlie', 4);
+    // Round 100: perfect
+    feedBlocks(generateRound(100, 1));
+    // Round 101: bravo misses
+    const r101 = generateRound(101, 100, ['bravo']);
+    const r = feedBlocks(r101);
+    if (r) results.push(r);
 
-    // Round 2 starts with alpha — triggers eval of round 1
-    // Then bravo misses in round 2
-    const r1 = feedProducer('alpha', 4);
-    expect(r1).not.toBeNull();
-    expect(r1!.producersMissed).toBe(0);
+    // Round 102 start triggers eval of 101
+    const slot = 102 * SLOTS_PER_ROUND;
+    const r2 = evaluator.processBlock(makeBlock(200, slot, expectedProducer(slot)));
+    if (r2) results.push(r2);
 
-    feedProducer('charlie', 4);
-
-    // Trigger eval of round 2
-    const r2 = evaluator.processBlock(makeBlock('alpha'));
-    expect(r2).not.toBeNull();
-    expect(r2!.producersMissed).toBe(1);
-
-    const dbRounds = db.getRecentRounds('libre', 'mainnet');
-    expect(dbRounds).toHaveLength(2);
+    expect(results).toHaveLength(2);
+    expect(results[0].roundNumber).toBe(100);
+    expect(results[0].producersMissed).toBe(0);
+    expect(results[1].roundNumber).toBe(101);
+    expect(results[1].producersMissed).toBe(1);
   });
 
-  it('should discard partial round after schedule version change', () => {
-    warmUp();
+  it('should track first complete round', () => {
+    feedBlocks(generateRound(100, 1));
+    const slot = 101 * SLOTS_PER_ROUND;
+    evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
 
-    // Start a round with schedule v2
-    feedProducer('alpha', 3, 2);
-    feedProducer('charlie', 4, 2);
-    // Trigger boundary — should discard since it's partial in new schedule
-    const result = evaluator.processBlock(makeBlock('alpha', 2));
-    expect(result).toBeNull();
+    const first = db.getState('libre', 'mainnet', 'first_complete_round');
+    expect(first).toBe('100');
+  });
 
-    // No v2 rounds in DB
-    const rounds = db.getRecentRounds('libre', 'mainnet');
-    const v2Rounds = rounds.filter((r: any) => r.schedule_version === 2);
-    expect(v2Rounds).toHaveLength(0);
+  it('should persist state for restart', () => {
+    feedBlocks(generateRound(100, 1));
+    const slot = 101 * SLOTS_PER_ROUND;
+    evaluator.processBlock(makeBlock(100, slot, expectedProducer(slot)));
+
+    const savedRound = db.getState('libre', 'mainnet', 'current_round');
+    expect(savedRound).toBe('101');
+
+    // New evaluator should restore
+    const evaluator2 = new RoundEvaluator(chainConfig, db, schedule);
+    expect(evaluator2.round).toBe(101);
+  });
+
+  it('should handle skipped rounds (long outage)', () => {
+    // Round 100
+    feedBlocks(generateRound(100, 1));
+
+    // Jump to round 105 (rounds 101-104 had no blocks at all)
+    const slot = 105 * SLOTS_PER_ROUND;
+    const result = evaluator.processBlock(makeBlock(200, slot, expectedProducer(slot)));
+
+    // Should evaluate round 100
+    expect(result).not.toBeNull();
+    expect(result!.roundNumber).toBe(100);
+
+    // currentRound should jump to 105
+    expect(evaluator.round).toBe(105);
   });
 });

@@ -229,7 +229,8 @@ export class ChainMonitor extends EventEmitter {
     this.lastBlockId = blockId;
     this.lastBlockProducer = block.producer;
 
-    // Check for schedule change via new_producers in block header
+    // Check for schedule change — works with both legacy new_producers
+    // and WTMSIG header extensions (producer_schedule_change_extension, ID 1)
     if (block.new_producers) {
       const changed = this.schedule.updateSchedule(
         block.new_producers.version,

@@ -1,5 +1,15 @@
 /** SHiP protocol message types */
 
+export interface ProducerAuthority {
+  producer_name: string;
+  authority: any; // block_signing_authority variant
+}
+
+export interface ProducerScheduleChange {
+  version: number;
+  producers: ProducerAuthority[];
+}
+
 export interface ShipBlockHeader {
   timestamp: string;
   producer: string;
@@ -8,10 +18,13 @@ export interface ShipBlockHeader {
   transaction_mroot: string;
   action_mroot: string;
   schedule_version: number;
+  /** Legacy field — empty when WTMSIG is active */
   new_producers?: {
     version: number;
     producers: Array<{ producer_name: string; block_signing_key: string }>;
   };
+  /** Header extensions — contains producer_schedule_change_extension (ID 1) when WTMSIG is active */
+  header_extensions: Array<{ type: number; data: any }>;
 }
 
 export interface ShipBlock {

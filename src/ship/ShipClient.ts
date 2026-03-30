@@ -513,6 +513,65 @@ export class ShipClient extends EventEmitter {
           type: 'signed_block',
           abi: this.abi!,
         }) as any;
+        // Parse header extensions
+        const headerExtensions: Array<{ type: number; data: any }> = [];
+        if (decoded.header_extensions && Array.isArray(decoded.header_extensions)) {
+          for (const ext of decoded.header_extensions) {
+            const extType = Number(ext.type ?? ext[0]);
+            const extData = ext.data ?? ext[1];
+            headerExtensions.push({ type: extType, data: extData });
+          }
+        }
+
+        // Extract new_producers from legacy field OR header extensions (WTMSIG)
+        let newProducers = undefined;
+
+        // Legacy: new_producers field in block header
+        if (decoded.new_producers) {
+          newProducers = {
+            version: Number(decoded.new_producers.version),
+            producers: decoded.new_producers.producers.map((p: any) => ({
+              producer_name: String(p.producer_name),
+              block_signing_key: String(p.block_signing_key),
+            })),
+          };
+        }
+
+        // WTMSIG: producer_schedule_change_extension (extension ID 1)
+        if (!newProducers) {
+          const scheduleExt = headerExtensions.find(e => e.type === 1);
+          if (scheduleExt && scheduleExt.data) {
+            try {
+              // The extension data is a serialized producer_authority_schedule
+              const extBytes = scheduleExt.data.array ?? scheduleExt.data;
+              if (extBytes && extBytes.length > 0) {
+                const schedule = Serializer.decode({
+                  data: extBytes instanceof Uint8Array ? extBytes : new Uint8Array(extBytes),
+                  type: 'producer_authority_schedule',
+                  abi: this.abi!,
+                }) as any;
+                if (schedule && schedule.producers) {
+                  newProducers = {
+                    version: Number(schedule.version),
+                    producers: schedule.producers.map((p: any) => ({
+                      producer_name: String(p.producer_name),
+                      block_signing_key: p.authority?.[1]?.keys?.[0]?.key
+                        ? String(p.authority[1].keys[0].key)
+                        : 'unknown',
+                    })),
+                  };
+                  log.info(
+                    { version: newProducers.version, producers: newProducers.producers.length, blockNum },
+                    'Schedule change detected from header extension (WTMSIG)'
+                  );
+                }
+              }
+            } catch (extErr) {
+              log.warn({ err: extErr, blockNum }, 'Failed to decode producer_schedule_change_extension');
+            }
+          }
+        }
+
         block = {
           timestamp: String(decoded.timestamp),
           producer: String(decoded.producer),
@@ -521,15 +580,8 @@ export class ShipClient extends EventEmitter {
           transaction_mroot: String(decoded.transaction_mroot),
           action_mroot: String(decoded.action_mroot),
           schedule_version: Number(decoded.schedule_version),
-          new_producers: decoded.new_producers
-            ? {
-                version: Number(decoded.new_producers.version),
-                producers: decoded.new_producers.producers.map((p: any) => ({
-                  producer_name: String(p.producer_name),
-                  block_signing_key: String(p.block_signing_key),
-                })),
-              }
-            : undefined,
+          new_producers: newProducers,
+          header_extensions: headerExtensions,
         };
       } catch (err) {
         log.error({ err, blockNum }, 'Failed to decode block');
