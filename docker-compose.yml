@@ -1,0 +1,10 @@
+services:
+  core-monitor:
+    build: .
+    container_name: anvoio-core-monitor
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${MONITOR_PORT:-3100}:3000"
+    volumes:
+      - ./data:/app/data
