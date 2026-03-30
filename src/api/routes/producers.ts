@@ -80,12 +80,22 @@ export async function producerRoutes(
       }
 
       const outages = await db.getLongestOutages(chain, network, days);
+      const latestRound = await db.getLatestRoundProducerDetails(chain, network);
 
       const enrichedStats = stats.map((s: any) => {
         const chainData = chainProducerMap.get(s.producer);
+        const lastRound = latestRound.get(s.producer);
+        // status: 'up' (12/12), 'degraded' (1-11/12), 'down' (0/12), null (no data)
+        let producing: string | null = null;
+        if (lastRound !== undefined) {
+          if (lastRound.produced === 0) producing = 'down';
+          else if (lastRound.produced < lastRound.expected) producing = 'degraded';
+          else producing = 'up';
+        }
         return {
           ...s,
           is_active: chainData ? chainData.is_active === 1 : true,
+          producing,
           producer_key: chainData?.producer_key || '',
           url: chainData?.url || '',
           scheduled: scheduleOrder.includes(s.producer),

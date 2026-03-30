@@ -401,9 +401,10 @@
         const rel = parseFloat(p.reliability_pct) || 0;
         const barColor = rel >= 99 ? 'var(--green)' : rel >= 95 ? 'var(--yellow)' : 'var(--red)';
         const relBadge = rel >= 99 ? 'badge-green' : rel >= 95 ? 'badge-yellow' : 'badge-red';
-        const statusBadge = p.is_active !== false
-          ? '<span class="badge badge-green">Up</span>'
-          : '<span class="badge badge-red">Down</span>';
+        const statusBadge = p.producing === 'up' ? '<span class="badge badge-green">Up</span>'
+          : p.producing === 'degraded' ? '<span class="badge badge-yellow">Degraded</span>'
+          : p.producing === 'down' ? '<span class="badge badge-red">Down</span>'
+          : '<span class="badge" style="background:rgba(139,143,163,0.15);color:var(--text-dim)">Unknown</span>';
         const warningIcon = p.warning ? ' <span title="' + p.warning + '" style="color:var(--orange);cursor:help;">&#9888;</span>' : '';
         const outage = p.longest_outage || 0;
         const outageColor = outage > 5 ? 'var(--red)' : outage > 0 ? 'var(--yellow)' : 'var(--text-dim)';

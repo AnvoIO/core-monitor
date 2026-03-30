@@ -376,6 +376,22 @@ export class Database {
     return result.rows;
   }
 
+  async getLatestRoundProducerDetails(chain: string, network: string): Promise<Map<string, { produced: number; expected: number }>> {
+    const result = await this.pool.query(
+      `SELECT rp.producer, rp.blocks_produced, rp.blocks_expected
+       FROM round_producers rp
+       JOIN rounds r ON rp.round_id = r.id
+       WHERE r.chain = $1 AND r.network = $2
+         AND r.id = (SELECT MAX(id) FROM rounds WHERE chain = $1 AND network = $2)`,
+      [chain, network]
+    );
+    const map = new Map<string, { produced: number; expected: number }>();
+    for (const row of result.rows) {
+      map.set(row.producer, { produced: row.blocks_produced, expected: row.blocks_expected });
+    }
+    return map;
+  }
+
   async getEarliestRounds(chain: string, network: string, limit: number = 1): Promise<any[]> {
     const result = await this.pool.query(
       `SELECT * FROM rounds WHERE chain = $1 AND network = $2
