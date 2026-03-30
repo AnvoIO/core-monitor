@@ -17,241 +17,62 @@
       --red: #ef4444;
       --blue: #3b82f6;
       --purple: #a855f7;
+      --orange: #f97316;
     }
-
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.5;
-    }
-
-    header {
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      padding: 16px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-
-    header h1 {
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: -0.3px;
-    }
-
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; }
     header h1 span { color: var(--blue); }
+    .header-right { display: flex; align-items: center; gap: 12px; }
+    .header-status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-dim); }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 
-    .header-status {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: var(--text-dim);
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--green);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-
-    .chain-tabs {
-      display: flex;
-      gap: 4px;
-      padding: 12px 24px 0;
-      background: var(--surface);
-    }
-
-    .chain-tab {
-      padding: 8px 16px;
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text-dim);
-      background: none;
-      border: 1px solid transparent;
-      border-bottom: none;
-      border-radius: 6px 6px 0 0;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
+    .controls-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+    .chain-tabs { display: flex; gap: 4px; }
+    .chain-tab { padding: 6px 14px; font-size: 13px; font-weight: 500; color: var(--text-dim); background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
     .chain-tab:hover { color: var(--text); background: var(--surface2); }
-    .chain-tab.active {
-      color: var(--text);
-      background: var(--bg);
-      border-color: var(--border);
+    .chain-tab.active { color: var(--text); background: var(--bg); border-color: var(--border); }
+    .controls-right { display: flex; align-items: center; gap: 10px; }
+
+    select, button.ctrl-btn {
+      background: var(--surface2); border: 1px solid var(--border); color: var(--text-dim);
+      padding: 5px 10px; border-radius: 4px; font-size: 12px; cursor: pointer; appearance: auto;
     }
+    select:hover, button.ctrl-btn:hover { color: var(--text); border-color: var(--text-dim); }
 
     main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .stat-card .label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
+    .stat-card .value { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+    .stat-card .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
 
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
-    }
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 24px; overflow: hidden; }
+    .section-header { padding: 14px 16px; font-size: 14px; font-weight: 600; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .section-header .count { font-size: 12px; color: var(--text-dim); font-weight: 400; }
+    .section-separator { padding: 8px 16px; color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-top: 2px solid var(--border); background: var(--surface2); }
 
-    .stat-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px;
-    }
-
-    .stat-card .label {
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--text-dim);
-      margin-bottom: 4px;
-    }
-
-    .stat-card .value {
-      font-size: 28px;
-      font-weight: 700;
-      letter-spacing: -1px;
-    }
-
-    .stat-card .sub {
-      font-size: 12px;
-      color: var(--text-dim);
-      margin-top: 2px;
-    }
-
-    .section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      margin-bottom: 24px;
-      overflow: hidden;
-    }
-
-    .section-header {
-      padding: 14px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    .section-header .count {
-      font-size: 12px;
-      color: var(--text-dim);
-      font-weight: 400;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-
-    th {
-      text-align: left;
-      padding: 10px 16px;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: var(--text-dim);
-      font-weight: 500;
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-
-    td {
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-    }
-
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 10px 16px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    td { padding: 10px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
     tr:last-child td { border-bottom: none; }
     tr:hover td { background: var(--surface2); }
 
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 4px;
-      font-size: 11px;
-      font-weight: 600;
-    }
-
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
     .badge-green { background: rgba(34, 197, 94, 0.15); color: var(--green); }
     .badge-yellow { background: rgba(234, 179, 8, 0.15); color: var(--yellow); }
     .badge-red { background: rgba(239, 68, 68, 0.15); color: var(--red); }
+    .badge-orange { background: rgba(249, 115, 22, 0.15); color: var(--orange); }
 
-    .bar-container {
-      width: 100px;
-      height: 6px;
-      background: var(--surface2);
-      border-radius: 3px;
-      overflow: hidden;
-      display: inline-block;
-      vertical-align: middle;
-      margin-right: 8px;
-    }
-
-    .bar-fill {
-      height: 100%;
-      border-radius: 3px;
-      transition: width 0.3s;
-    }
-
-    .reliability-cell {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
+    .bar-container { width: 80px; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; display: inline-block; vertical-align: middle; margin-right: 6px; }
+    .bar-fill { height: 100%; border-radius: 3px; }
+    .reliability-cell { display: flex; align-items: center; gap: 6px; }
     .mono { font-family: 'SF Mono', 'Menlo', 'Consolas', monospace; font-size: 12px; }
-
-    .empty-state {
-      padding: 40px;
-      text-align: center;
-      color: var(--text-dim);
-      font-size: 14px;
-    }
-
-    .refresh-btn {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      padding: 4px 10px;
-      border-radius: 4px;
-      font-size: 12px;
-      cursor: pointer;
-    }
-
-    .refresh-btn:hover { color: var(--text); border-color: var(--text-dim); }
-
-    .sort-toggle {
-      min-width: 130px;
-      text-align: center;
-    }
-
-    .event-row .severity {
-      width: 4px;
-      padding: 0;
-    }
-
-    .event-row .severity-bar {
-      width: 3px;
-      height: 100%;
-      min-height: 20px;
-    }
-
+    .empty-state { padding: 40px; text-align: center; color: var(--text-dim); font-size: 14px; }
+    .event-row .severity { width: 4px; padding: 0; }
+    .event-row .severity-bar { width: 3px; height: 100%; min-height: 20px; }
     .event-time { color: var(--text-dim); }
 
     @media (max-width: 768px) {
@@ -259,7 +80,12 @@
       main { padding: 16px; }
       table { font-size: 12px; }
       th, td { padding: 8px 10px; }
+      .controls-bar { flex-wrap: wrap; gap: 8px; }
     }
+
+    footer { text-align: center; padding: 24px; color: var(--text-dim); font-size: 12px; border-top: 1px solid var(--border); }
+    footer a { color: var(--blue); text-decoration: none; }
+    footer a:nth-of-type(2) { color: var(--text-dim); }
   </style>
 </head>
 <body>
@@ -271,18 +97,37 @@
     </div>
   </header>
 
-  <div class="chain-tabs" id="chainTabs"></div>
+  <div class="controls-bar">
+    <div class="chain-tabs" id="chainTabs"></div>
+    <div class="controls-right">
+      <select id="timeframe" onchange="refreshData()">
+        <option value="1h">Last 1 Hour</option>
+        <option value="1d">Last 24 Hours</option>
+        <option value="1w" selected>Last 7 Days</option>
+        <option value="1m">Last 30 Days</option>
+        <option value="1y">Last Year</option>
+        <option value="all">All Time</option>
+      </select>
+      <select id="sortOrder" onchange="rerender()">
+        <option value="performance">Sort: Performance</option>
+        <option value="schedule">Sort: Schedule Order</option>
+        <option value="alpha">Sort: Alphabetical</option>
+      </select>
+      <select id="timeMode" onchange="rerender()">
+        <option value="local">Local Time</option>
+        <option value="utc">UTC</option>
+      </select>
+      <button class="ctrl-btn" onclick="refreshData()">Refresh</button>
+    </div>
+  </div>
 
   <main>
     <div class="grid" id="statsGrid"></div>
 
     <div class="section">
       <div class="section-header">
-        <span>Producer Reliability</span>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <span class="count" id="producerCount"></span>
-          <button class="refresh-btn sort-toggle" id="sortToggle" onclick="toggleSort()">Sort: Performance</button>
-        </div>
+        <span>Producers</span>
+        <span class="count" id="producerCount"></span>
       </div>
       <div id="producerTable"></div>
     </div>
@@ -291,11 +136,9 @@
       <div class="section">
         <div class="section-header">
           <span>Recent Rounds</span>
-          <button class="refresh-btn" onclick="refreshData()">Refresh</button>
         </div>
         <div id="roundsTable"></div>
       </div>
-
       <div class="section">
         <div class="section-header">
           <span>Events</span>
@@ -306,39 +149,78 @@
     </div>
   </main>
 
-  <footer style="text-align: center; padding: 24px; color: var(--text-dim); font-size: 12px; border-top: 1px solid var(--border);">
-    &copy; 2026 <a href="https://anvo.io" style="color: var(--blue); text-decoration: none;">AnvoIO</a> &mdash;
-    <a href="https://github.com/AvoIO/core-monitor" style="color: var(--text-dim); text-decoration: none;">GitHub</a>
+  <footer>
+    &copy; 2026 <a href="https://anvo.io">AnvoIO</a> &mdash;
+    <a href="https://github.com/AnvoIO/core-monitor">GitHub</a>
   </footer>
 
   <script>
-    const API = '';
     let chains = [];
     let activeChain = null;
+    let lastData = {};
     let refreshTimer = null;
-    let sortBySchedule = false;
-    let lastProducerData = null;
 
-    async function fetchJSON(url) {
-      const res = await fetch(API + url);
-      return res.json();
+    // Persistence
+    const savedTimeMode = localStorage.getItem('timeMode');
+    if (savedTimeMode) document.getElementById('timeMode').value = savedTimeMode;
+    const savedSort = localStorage.getItem('sortOrder');
+    if (savedSort) document.getElementById('sortOrder').value = savedSort;
+
+    async function fetchJSON(url) { return (await fetch(url)).json(); }
+
+    function getTimeframeDays() {
+      const tf = document.getElementById('timeframe').value;
+      const map = { '1h': 0.042, '1d': 1, '1w': 7, '1m': 30, '1y': 365, 'all': 9999 };
+      return map[tf] || 7;
     }
+
+    function getTimeframeSince() {
+      const days = getTimeframeDays();
+      if (days >= 9999) return null;
+      return new Date(Date.now() - days * 86400000).toISOString();
+    }
+
+    function formatTime(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      const utc = document.getElementById('timeMode').value === 'utc';
+      if (utc) return d.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+      return d.toLocaleString();
+    }
+
+    function formatTimeShort(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      const utc = document.getElementById('timeMode').value === 'utc';
+      if (utc) return d.toISOString().substring(11, 19) + ' UTC';
+      return d.toLocaleTimeString();
+    }
+
+    function formatDate(ts) {
+      if (!ts) return '—';
+      const d = new Date(ts);
+      const utc = document.getElementById('timeMode').value === 'utc';
+      if (utc) return d.toISOString().substring(0, 10);
+      return d.toLocaleDateString();
+    }
+
+    document.getElementById('timeMode').addEventListener('change', () => {
+      localStorage.setItem('timeMode', document.getElementById('timeMode').value);
+    });
+    document.getElementById('sortOrder').addEventListener('change', () => {
+      localStorage.setItem('sortOrder', document.getElementById('sortOrder').value);
+    });
 
     async function init() {
       try {
         const data = await fetchJSON('/api/v1/chains');
         chains = data.chains;
-        if (chains.length === 0) {
-          document.getElementById('statusText').textContent = 'No chains configured';
-          return;
-        }
+        if (chains.length === 0) { document.getElementById('statusText').textContent = 'No chains configured'; return; }
         renderTabs();
         activeChain = chains[0];
         await refreshData();
         document.getElementById('statusDot').style.background = 'var(--green)';
         document.getElementById('statusText').textContent = 'Connected';
-
-        // Auto-refresh every 30 seconds
         refreshTimer = setInterval(refreshData, 30000);
       } catch (err) {
         document.getElementById('statusDot').style.background = 'var(--red)';
@@ -347,31 +229,37 @@
     }
 
     function renderTabs() {
-      const tabs = document.getElementById('chainTabs');
-      tabs.innerHTML = chains.map((c, i) =>
+      document.getElementById('chainTabs').innerHTML = chains.map((c, i) =>
         `<button class="chain-tab ${i === 0 ? 'active' : ''}" onclick="switchChain(${i})">${c.chain} ${c.network}</button>`
       ).join('');
     }
 
     async function switchChain(index) {
       activeChain = chains[index];
-      document.querySelectorAll('.chain-tab').forEach((t, i) => {
-        t.classList.toggle('active', i === index);
-      });
+      document.querySelectorAll('.chain-tab').forEach((t, i) => t.classList.toggle('active', i === index));
       await refreshData();
     }
 
     async function refreshData() {
       if (!activeChain) return;
       const { chain, network } = activeChain;
+      const days = Math.ceil(getTimeframeDays());
+      const since = getTimeframeSince();
 
       const [producers, rounds, events, status] = await Promise.all([
-        fetchJSON(`/api/v1/${chain}/${network}/producers?days=7`),
-        fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=20`),
-        fetchJSON(`/api/v1/${chain}/${network}/events?limit=20`),
+        fetchJSON(`/api/v1/${chain}/${network}/producers?days=${days}`),
+        fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=50${since ? '&since=' + since : ''}`),
+        fetchJSON(`/api/v1/${chain}/${network}/events?limit=30${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/status`).catch(() => null),
       ]);
 
+      lastData = { producers, rounds, events, status };
+      rerender();
+    }
+
+    function rerender() {
+      const { producers, rounds, events, status } = lastData;
+      if (!producers) return;
       renderStats(producers, rounds, status);
       renderProducers(producers);
       renderRounds(rounds);
@@ -381,159 +269,171 @@
     function renderStats(producers, rounds, status) {
       const prods = producers.producers || [];
       const rds = rounds.rounds || [];
+      const scheduleVersion = status?.scheduleVersion ?? 0;
+      const currentRound = status?.currentRound ?? 0;
+      const firstRound = status?.firstCompleteRound;
+      const activation = status?.scheduleActivation;
+      const earliest = status?.earliestData;
 
-      const totalProducers = prods.length;
       const avgReliability = prods.length > 0
-        ? (prods.reduce((s, p) => s + (p.reliability_pct || 0), 0) / prods.length).toFixed(1)
+        ? (prods.reduce((s, p) => s + parseFloat(p.reliability_pct || 0), 0) / prods.length).toFixed(2)
         : '—';
 
-      const currentRound = status?.currentRound ?? (rds.length > 0 ? rds[0].round_number : 0);
-      const firstRound = status?.firstCompleteRound;
-      const scheduleVersion = status?.scheduleVersion ?? (rds.length > 0 ? rds[0].schedule_version : 0);
-      const recentMisses = rds.filter(r => r.producers_missed > 0).length;
       const perfectRounds = rds.filter(r => r.producers_missed === 0).length;
-      const monitoringSince = firstRound != null
-        ? `since round ${firstRound.toLocaleString()}`
-        : 'waiting for first complete round';
+      const issueRounds = rds.filter(r => r.producers_missed > 0).length;
+      const tf = document.getElementById('timeframe').selectedOptions[0].text.toLowerCase();
 
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-card">
           <div class="label">Schedule</div>
           <div class="value mono">${scheduleVersion}</div>
-          <div class="sub">${totalProducers} producers</div>
+          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}</div>
         </div>
         <div class="stat-card">
           <div class="label">Current Round</div>
           <div class="value mono">${currentRound.toLocaleString()}</div>
-          <div class="sub">monitoring ${monitoringSince}</div>
+          <div class="sub">${earliest ? 'data from round ' + (earliest.roundNumber || 0).toLocaleString() + ' / ' + formatDate(earliest.timestamp) : 'no historical data'}</div>
         </div>
         <div class="stat-card">
           <div class="label">Avg Reliability</div>
           <div class="value" style="color: ${parseFloat(avgReliability) >= 99 ? 'var(--green)' : parseFloat(avgReliability) >= 95 ? 'var(--yellow)' : 'var(--red)'}">${avgReliability}%</div>
-          <div class="sub">last 7 days</div>
+          <div class="sub">${tf}</div>
         </div>
         <div class="stat-card">
           <div class="label">Perfect Rounds</div>
           <div class="value" style="color: var(--green)">${perfectRounds}</div>
-          <div class="sub">of last ${rds.length} tracked</div>
+          <div class="sub">of ${rds.length} in ${tf}</div>
         </div>
         <div class="stat-card">
           <div class="label">Rounds with Issues</div>
-          <div class="value" style="color: ${recentMisses > 0 ? 'var(--yellow)' : 'var(--green)'}">${recentMisses}</div>
-          <div class="sub">of last ${rds.length} tracked</div>
+          <div class="value" style="color: ${issueRounds > 0 ? 'var(--yellow)' : 'var(--green)'}">${issueRounds}</div>
+          <div class="sub">of ${rds.length} in ${tf}</div>
         </div>
       `;
     }
 
-    function toggleSort() {
-      sortBySchedule = !sortBySchedule;
-      document.getElementById('sortToggle').textContent = sortBySchedule ? 'Sort: Schedule' : 'Sort: Performance';
-      if (lastProducerData) renderProducers(lastProducerData);
-    }
-
     function renderProducers(data) {
-      lastProducerData = data;
       const scheduleOrder = data.scheduleOrder || [];
-      let prods = [...(data.producers || [])];
-
-      if (sortBySchedule && scheduleOrder.length > 0) {
-        prods.sort((a, b) => {
-          const ai = scheduleOrder.indexOf(a.producer);
-          const bi = scheduleOrder.indexOf(b.producer);
-          return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
-        });
-      }
-
+      const scheduledSet = new Set(scheduleOrder);
+      const allProds = [...(data.producers || [])];
       const registered = data.registeredProducers || [];
-      const totalScheduled = prods.length;
-      const totalRegistered = registered.length;
-      document.getElementById('producerCount').textContent = `${totalScheduled} scheduled, ${totalRegistered} registered`;
+      const sortMode = document.getElementById('sortOrder').value;
 
-      if (prods.length === 0 && registered.length === 0) {
-        document.getElementById('producerTable').innerHTML = '<div class="empty-state">Waiting for data...</div>';
-        return;
+      // Section 1: Scheduled (in active schedule)
+      let scheduled = allProds.filter(p => scheduledSet.has(p.producer));
+      // Section 2: Standby (registered, active, valid key, not scheduled)
+      let standby = registered.filter(p => p.is_active && p.producer_key && !p.producer_key.startsWith('EOS111111111'));
+      // Section 3: Unregistered (inactive or null key, not scheduled)
+      let unregistered = registered.filter(p => !p.is_active || !p.producer_key || p.producer_key.startsWith('EOS111111111'));
+
+      // Also add scheduled producers with stats but check for warning (unregistered but scheduled)
+      const scheduledWithWarning = scheduled.map(p => ({
+        ...p,
+        warning: !p.is_active ? 'Unregistered but still scheduled' : null,
+      }));
+
+      // Sort scheduled
+      if (sortMode === 'schedule') {
+        scheduledWithWarning.sort((a, b) => scheduleOrder.indexOf(a.producer) - scheduleOrder.indexOf(b.producer));
+      } else if (sortMode === 'alpha') {
+        scheduledWithWarning.sort((a, b) => a.producer.localeCompare(b.producer));
       }
+      // performance is default from API (reliability DESC, alpha ASC)
+
+      // Sort standby
+      if (sortMode === 'performance' && standby.some(s => s.reliability_pct != null)) {
+        standby.sort((a, b) => (b.reliability_pct || 0) - (a.reliability_pct || 0) || a.producer.localeCompare(b.producer));
+      } else {
+        standby.sort((a, b) => a.producer.localeCompare(b.producer));
+      }
+
+      // Unregistered always alphabetical
+      unregistered.sort((a, b) => a.producer.localeCompare(b.producer));
+
+      const totalScheduled = scheduledWithWarning.length;
+      const totalStandby = standby.length;
+      const totalUnregistered = unregistered.length;
+      document.getElementById('producerCount').textContent = `${totalScheduled} scheduled, ${totalStandby} standby, ${totalUnregistered} unregistered`;
 
       function truncateKey(key) {
         if (!key || key.length < 20) return key || '';
-        return key.substring(0, 12) + '...' + key.substring(key.length - 6);
+        return key.substring(0, 10) + '...' + key.substring(key.length - 4);
       }
 
       function formatOutage(rounds) {
-        if (!rounds) return '&mdash;';
-        // Round duration: scheduleSize * blocksPerBp * blockTimeMs
+        if (!rounds) return '—';
         const chain = activeChain || {};
         const roundMs = (chain.scheduleSize || 21) * (chain.blocksPerBp || 12) * (chain.blockTimeMs || 500);
         const totalMs = rounds * roundMs;
         const mins = Math.floor(totalMs / 60000);
         const hrs = Math.floor(mins / 60);
-        if (hrs > 0) return `${rounds} rounds (~${hrs}h ${mins % 60}m)`;
-        return `${rounds} rounds (~${mins}m)`;
+        if (hrs > 0) return `${rounds} (~${hrs}h ${mins % 60}m)`;
+        return `${rounds} (~${mins}m)`;
       }
 
-      function renderProducerRow(p, index, dimmed) {
-        const rel = p.reliability_pct ?? 0;
-        const hasData = p.total_rounds > 0;
+      function producerRow(p, index, dimmed) {
+        const hasData = (p.total_rounds || 0) > 0;
+        const rel = parseFloat(p.reliability_pct) || 0;
         const barColor = rel >= 99 ? 'var(--green)' : rel >= 95 ? 'var(--yellow)' : 'var(--red)';
-        const badge = rel >= 99 ? 'badge-green' : rel >= 95 ? 'badge-yellow' : 'badge-red';
-        const regBadge = p.is_active
-          ? '<span class="badge badge-green">active</span>'
-          : '<span class="badge badge-red">inactive</span>';
+        const relBadge = rel >= 99 ? 'badge-green' : rel >= 95 ? 'badge-yellow' : 'badge-red';
+        const statusBadge = p.is_active !== false
+          ? '<span class="badge badge-green">Up</span>'
+          : '<span class="badge badge-red">Down</span>';
+        const warningIcon = p.warning ? ' <span title="' + p.warning + '" style="color:var(--orange);cursor:help;">&#9888;</span>' : '';
         const outage = p.longest_outage || 0;
         const outageColor = outage > 5 ? 'var(--red)' : outage > 0 ? 'var(--yellow)' : 'var(--text-dim)';
-        const style = dimmed ? ' style="opacity: 0.6;"' : '';
+        const style = dimmed ? ' style="opacity:0.6"' : '';
 
         return `<tr${style}>
-          <td style="color: var(--text-dim); width: 30px;">${index}</td>
-          <td><strong>${p.producer}</strong></td>
-          <td>${regBadge}</td>
-          <td class="mono" style="font-size:11px; color: var(--text-dim);" title="${p.producer_key || ''}">${truncateKey(p.producer_key)}</td>
-          <td class="mono">${hasData ? p.total_rounds : '&mdash;'}</td>
-          <td class="mono">${hasData ? p.rounds_produced : '&mdash;'}</td>
-          <td class="mono" style="color: ${(p.rounds_missed || 0) > 0 ? 'var(--red)' : 'var(--text-dim)'}">${hasData ? p.rounds_missed : '&mdash;'}</td>
-          <td class="mono">${hasData ? `${p.total_blocks_produced} / ${p.total_blocks_expected}` : '&mdash;'}</td>
-          <td class="mono" style="color: ${outageColor}">${outage > 0 ? formatOutage(outage) : '&mdash;'}</td>
-          <td>${hasData ? `<div class="reliability-cell">
-              <div class="bar-container">
-                <div class="bar-fill" style="width: ${rel}%; background: ${barColor}"></div>
-              </div>
-              <span class="badge ${badge}">${rel.toFixed(1)}%</span>
-            </div>` : '<span style="color: var(--text-dim);">&mdash;</span>'}</td>
+          <td style="color:var(--text-dim);width:30px">${index}</td>
+          <td><strong>${p.producer}</strong>${warningIcon}</td>
+          <td>${statusBadge}</td>
+          <td class="mono" style="font-size:11px;color:var(--text-dim)" title="${p.producer_key||''}">${truncateKey(p.producer_key)}</td>
+          <td class="mono">${hasData ? p.total_rounds : '—'}</td>
+          <td class="mono">${hasData ? p.rounds_produced : '—'}</td>
+          <td class="mono" style="color:${(p.rounds_missed||0)>0?'var(--red)':'var(--text-dim)'}">${hasData ? p.rounds_missed : '—'}</td>
+          <td class="mono">${hasData ? `${p.total_blocks_produced}/${p.total_blocks_expected}` : '—'}</td>
+          <td class="mono" style="color:${outageColor}">${outage > 0 ? formatOutage(outage) : '—'}</td>
+          <td>${hasData ? `<div class="reliability-cell"><div class="bar-container"><div class="bar-fill" style="width:${Math.min(rel,100)}%;background:${barColor}"></div></div><span class="badge ${relBadge}">${rel.toFixed(2)}%</span></div>` : '<span style="color:var(--text-dim)">—</span>'}</td>
         </tr>`;
       }
 
-      const scheduledRows = prods.map((p, i) => renderProducerRow(p, i + 1, false)).join('');
+      const header = `<thead><tr>
+        <th>#</th><th>Producer</th><th>Status</th><th>Signing Key</th>
+        <th>Scheduled</th><th>Produced</th><th>Missed</th><th>Blocks</th>
+        <th>Longest Outage</th><th>Reliability</th>
+      </tr></thead>`;
 
-      const registeredRows = registered.length > 0
-        ? `<tr><td colspan="10" style="padding: 8px 16px; color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-top: 2px solid var(--border);">Registered (not scheduled)</td></tr>` +
-          registered.sort((a, b) => a.producer.localeCompare(b.producer))
-            .map(p => renderProducerRow(p, '&mdash;', true)).join('')
-        : '';
+      let body = '';
 
-      document.getElementById('producerTable').innerHTML = `
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Producer</th>
-              <th>Status</th>
-              <th>Signing Key</th>
-              <th>Rounds</th>
-              <th>Produced</th>
-              <th>Missed</th>
-              <th>Blocks</th>
-              <th>Longest Outage</th>
-              <th>Reliability</th>
-            </tr>
-          </thead>
-          <tbody>${scheduledRows}${registeredRows}</tbody>
-        </table>
-      `;
+      // Section 1: Scheduled
+      if (scheduledWithWarning.length > 0) {
+        body += `<tr><td colspan="10" class="section-separator">Scheduled (${scheduledWithWarning.length})</td></tr>`;
+        body += scheduledWithWarning.map((p, i) => producerRow(p, i + 1, false)).join('');
+      }
+
+      // Section 2: Standby
+      if (standby.length > 0) {
+        body += `<tr><td colspan="10" class="section-separator">Standby (${standby.length})</td></tr>`;
+        body += standby.map(p => producerRow(p, '—', true)).join('');
+      }
+
+      // Section 3: Unregistered
+      if (unregistered.length > 0) {
+        body += `<tr><td colspan="10" class="section-separator">Unregistered (${unregistered.length})</td></tr>`;
+        body += unregistered.map(p => producerRow(p, '—', true)).join('');
+      }
+
+      if (!body) {
+        document.getElementById('producerTable').innerHTML = '<div class="empty-state">Waiting for data...</div>';
+        return;
+      }
+
+      document.getElementById('producerTable').innerHTML = `<table>${header}<tbody>${body}</tbody></table>`;
     }
 
     function renderRounds(data) {
       const rounds = data.rounds || [];
-
       if (rounds.length === 0) {
         document.getElementById('roundsTable').innerHTML = '<div class="empty-state">Waiting for rounds...</div>';
         return;
@@ -542,25 +442,18 @@
       const rows = rounds.map(r => {
         const status = r.producers_missed === 0 ? 'badge-green' : 'badge-yellow';
         const label = r.producers_missed === 0 ? 'Perfect' : `${r.producers_missed} missed`;
-        const time = r.timestamp_end ? new Date(r.timestamp_end).toLocaleTimeString() : '—';
-        const roundRef = `${r.schedule_version} / ${r.round_number}`;
-
         return `<tr>
-          <td class="mono">${roundRef}</td>
+          <td class="mono">${r.schedule_version} / ${r.round_number.toLocaleString()}</td>
           <td class="mono">${r.producers_produced}/${r.producers_scheduled}</td>
           <td><span class="badge ${status}">${label}</span></td>
-          <td class="event-time">${time}</td>
+          <td class="event-time">${formatTimeShort(r.timestamp_end)}</td>
         </tr>`;
       }).join('');
 
-      document.getElementById('roundsTable').innerHTML = `
-        <table>
-          <thead>
-            <tr><th>Round</th><th>Produced</th><th>Status</th><th>Time</th></tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-      `;
+      document.getElementById('roundsTable').innerHTML = `<table>
+        <thead><tr><th>Round</th><th>Produced</th><th>Status</th><th>Time</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
     }
 
     function renderEvents(data) {
@@ -570,15 +463,10 @@
       const producerEvents = data.producer_events || [];
 
       const all = [
-        ...missed.map(e => ({ type: 'missed', severity: 'red', text: `${e.producer} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
-        ...forks.map(e => ({ type: 'fork', severity: 'yellow', text: `Fork: ${e.original_producer} replaced by ${e.replacement_producer} at block ${e.block_number}`, time: e.timestamp })),
-        ...schedules.map(e => ({ type: 'schedule', severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
-        ...producerEvents.map(e => ({
-          type: 'producer',
-          severity: e.action === 'regproducer' ? 'green' : 'purple',
-          text: `${e.producer} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`,
-          time: e.timestamp,
-        })),
+        ...missed.map(e => ({ severity: 'red', text: `${e.producer} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
+        ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${e.original_producer} replaced by ${e.replacement_producer} at block ${e.block_number}`, time: e.timestamp })),
+        ...schedules.map(e => ({ severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
+        ...producerEvents.map(e => ({ severity: e.action === 'regproducer' ? 'green' : 'purple', text: `${e.producer} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`, time: e.timestamp })),
       ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 30);
 
       document.getElementById('eventCount').textContent = `${all.length} events`;
@@ -591,18 +479,16 @@
       const colorMap = { red: 'var(--red)', yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)', purple: 'var(--purple)' };
       const rows = all.map(e => `
         <tr class="event-row">
-          <td class="severity"><div class="severity-bar" style="background: ${colorMap[e.severity]}"></div></td>
+          <td class="severity"><div class="severity-bar" style="background:${colorMap[e.severity]}"></div></td>
           <td>${e.text}</td>
-          <td class="event-time">${new Date(e.time).toLocaleString()}</td>
+          <td class="event-time">${formatTime(e.time)}</td>
         </tr>
       `).join('');
 
-      document.getElementById('eventsTable').innerHTML = `
-        <table>
-          <thead><tr><th style="width:4px"></th><th>Event</th><th>Time</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      `;
+      document.getElementById('eventsTable').innerHTML = `<table>
+        <thead><tr><th style="width:4px"></th><th>Event</th><th>Time</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
     }
 
     init();

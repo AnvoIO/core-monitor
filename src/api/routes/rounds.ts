@@ -8,6 +8,7 @@ interface RoundParams {
 
 interface RoundQuery {
   limit?: string;
+  since?: string;
 }
 
 export async function roundRoutes(
@@ -19,7 +20,8 @@ export async function roundRoutes(
     async (request) => {
       const { chain, network } = request.params;
       const limit = parseInt(request.query.limit || '100', 10);
-      const rounds = await db.getRecentRounds(chain, network, Math.min(limit, 500));
+      const since = request.query.since || null;
+      const rounds = await db.getRecentRounds(chain, network, Math.min(limit, 500), since);
       return { chain, network, rounds };
     }
   );

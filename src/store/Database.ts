@@ -365,10 +365,21 @@ export class Database {
 
   // -- Query Methods (for API) --
 
-  async getRecentRounds(chain: string, network: string, limit: number = 100): Promise<any[]> {
+  async getRecentRounds(chain: string, network: string, limit: number = 100, since: string | null = null): Promise<any[]> {
+    const params: any[] = [chain, network];
+    let sql = 'SELECT * FROM rounds WHERE chain = $1 AND network = $2';
+    let idx = 3;
+    if (since) { sql += ` AND timestamp_start >= $${idx++}`; params.push(since); }
+    sql += ` ORDER BY round_number DESC LIMIT $${idx++}`;
+    params.push(limit);
+    const result = await this.pool.query(sql, params);
+    return result.rows;
+  }
+
+  async getEarliestRounds(chain: string, network: string, limit: number = 1): Promise<any[]> {
     const result = await this.pool.query(
       `SELECT * FROM rounds WHERE chain = $1 AND network = $2
-       ORDER BY round_number DESC LIMIT $3`,
+       ORDER BY round_number ASC LIMIT $3`,
       [chain, network, limit]
     );
     return result.rows;

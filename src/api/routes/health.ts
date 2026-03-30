@@ -32,6 +32,13 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
         const activationRound = activationGlobalRound ? parseInt(activationGlobalRound, 10) : 0;
         const displayRound = globalRound - activationRound;
 
+        // Get schedule activation details
+        const scheduleChanges = await db.getScheduleChanges(chain, network, 1);
+        const latestSchedule = scheduleChanges.length > 0 ? scheduleChanges[0] : null;
+
+        // Get earliest data (oldest round, ASC)
+        const earliestRounds = await db.getEarliestRounds(chain, network, 1);
+
         return {
           chain,
           network,
@@ -40,6 +47,14 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
           lastBlock: lastBlock ? parseInt(lastBlock, 10) : 0,
           scheduleVersion: schedule?.version ?? 0,
           producerCount: schedule?.producers?.length ?? 0,
+          scheduleActivation: latestSchedule ? {
+            blockNumber: latestSchedule.block_number,
+            timestamp: latestSchedule.timestamp,
+          } : null,
+          earliestData: earliestRounds.length > 0 ? {
+            roundNumber: earliestRounds[0].round_number,
+            timestamp: earliestRounds[0].timestamp_start,
+          } : null,
         };
       }
     );
