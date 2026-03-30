@@ -73,6 +73,7 @@ const scheduleStream = createWriteStream(scheduleCsv);
 let scheduleVersion = 0;
 let scheduleProducers: string[] = [];
 let currentRound = -1;
+let firstRoundIsPartial = true;
 let headBlockNum = 0;
 let currentBlockNum = 0;
 let blocksProcessed = 0;
@@ -171,8 +172,12 @@ function processBlock(blockNum: number, producer: string, timestamp: string, sv:
   }
 
   if (blockRound > currentRound) {
-    // Evaluate completed round
-    writeRound();
+    if (firstRoundIsPartial) {
+      // Discard first partial round
+      firstRoundIsPartial = false;
+    } else {
+      writeRound();
+    }
 
     // Start new round
     currentRound = blockRound;

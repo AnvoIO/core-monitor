@@ -405,7 +405,7 @@
           : p.producing === 'degraded' ? '<span class="badge badge-yellow">Degraded</span>'
           : p.producing === 'down' ? '<span class="badge badge-red">Down</span>'
           : '<span class="badge" style="background:rgba(139,143,163,0.15);color:var(--text-dim)">Unknown</span>';
-        const warningIcon = p.warning ? ' <span title="' + p.warning + '" style="color:var(--orange);cursor:help;">&#9888;</span>' : '';
+        const warningIcon = p.warning ? ' <span title="' + p.warning + '" style="color:var(--orange);cursor:help;font-size:14px;">&#9888;</span>' : '';
         const outage = p.longest_outage || 0;
         const outageColor = outage > 5 ? 'var(--red)' : outage > 0 ? 'var(--yellow)' : 'var(--text-dim)';
         const style = dimmed ? ' style="opacity:0.6"' : '';

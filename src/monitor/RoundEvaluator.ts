@@ -51,6 +51,7 @@ export class RoundEvaluator {
   private currentGlobalRound: number = -1;
   private scheduleActivationGlobalRound: number = 0;
   private lastBlockNum: number = 0;
+  private firstRoundIsPartial: boolean = true;
 
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
   private roundStartTimestamp: string = '';
@@ -68,6 +69,9 @@ export class RoundEvaluator {
 
     const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, 'current_global_round');
     this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
+    // Always discard the first round after startup — we never know if we
+    // observed it from the beginning, whether fresh start or resume
+    this.firstRoundIsPartial = true;
 
     const savedActivation = await this.db.getState(this.config.chain, this.config.network, 'schedule_activation_global_round');
     this.scheduleActivationGlobalRound = savedActivation ? parseInt(savedActivation, 10) : 0;
@@ -124,7 +128,23 @@ export class RoundEvaluator {
     }
 
     if (globalRound > this.currentGlobalRound) {
-      const result = await this.evaluateRound();
+      let result: RoundResult | null = null;
+
+      if (this.firstRoundIsPartial) {
+        // Discard the first round — we joined mid-round and don't have complete data
+        log.info(
+          {
+            chain: this.config.chain,
+            network: this.config.network,
+            discardedRound: this.currentGlobalRound,
+            observedProducers: this.roundBlocks.size,
+          },
+          'Discarding partial round (joined mid-round)'
+        );
+        this.firstRoundIsPartial = false;
+      } else {
+        result = await this.evaluateRound();
+      }
 
       this.currentGlobalRound = globalRound;
       this.roundBlocks.clear();
