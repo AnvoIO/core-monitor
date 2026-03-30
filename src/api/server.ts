@@ -14,9 +14,7 @@ const log = logger.child({ module: 'API' });
 
 export async function createServer(config: AppConfig, db: Database) {
   const app = Fastify({
-    logger: {
-      level: process.env.LOG_LEVEL || 'info',
-    },
+    logger: true,
   });
 
   // CORS — configurable via API_CORS_ORIGIN env var (default: *)
