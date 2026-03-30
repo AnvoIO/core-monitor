@@ -18,6 +18,7 @@ export class ChainMonitor extends EventEmitter {
   private lastLogTime: number = 0;
   private lastBlockId: string = '';
   private lastBlockProducer: string = '';
+  private pendingSchedule: { version: number; producers: Array<{ producer_name: string; block_signing_key: string }> } | null = null;
 
   constructor(config: ChainConfig, db: Database) {
     super();
@@ -210,11 +211,23 @@ export class ChainMonitor extends EventEmitter {
     this.lastBlockId = blockId;
     this.lastBlockProducer = block.producer;
 
-    // Schedule change detection (legacy + WTMSIG header extensions)
-    if (block.new_producers) {
+    // Schedule change detection
+    // new_producers from block header (legacy) or header extensions (WTMSIG)
+    // represents a PROPOSED schedule, not yet active. Store it as pending.
+    if (block.new_producers && block.new_producers.version > this.schedule.version) {
+      this.pendingSchedule = block.new_producers;
+      this.log.info(
+        { version: block.new_producers.version, blockNum },
+        'Pending schedule detected (not yet active)'
+      );
+    }
+
+    // The schedule_version in the block header tells us which schedule is
+    // actually ACTIVE. When it increments, apply the pending schedule.
+    if (block.schedule_version > this.schedule.version && this.pendingSchedule) {
       const changed = await this.schedule.updateSchedule(
-        block.new_producers.version,
-        block.new_producers.producers,
+        this.pendingSchedule.version,
+        this.pendingSchedule.producers,
         blockNum,
         block.timestamp
       );
@@ -224,12 +237,13 @@ export class ChainMonitor extends EventEmitter {
         this.emit('schedule_change', {
           chain: this.config.chain,
           network: this.config.network,
-          version: block.new_producers.version,
-          producers: block.new_producers.producers.map((p) => p.producer_name),
+          version: this.pendingSchedule.version,
+          producers: this.pendingSchedule.producers.map((p) => p.producer_name),
           blockNum,
           timestamp: block.timestamp,
         });
       }
+      this.pendingSchedule = null;
     }
 
     // Producer registration events
