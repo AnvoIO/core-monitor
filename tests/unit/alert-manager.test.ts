@@ -155,7 +155,7 @@ describe('AlertManager', () => {
   });
 
   describe('convenience methods', () => {
-    it('should format missedRound alert with schedule-relative round', async () => {
+    it('should format missedRound alert', async () => {
       await manager.missedRound({
         chain: 'libre',
         network: 'mainnet',
@@ -167,12 +167,12 @@ describe('AlertManager', () => {
       });
 
       expect(channel.calls[0].severity).toBe('alert');
-      expect(channel.calls[0].title).toContain('badproducer');
+      expect(channel.calls[0].title).toContain('Missed Round');
       expect(channel.calls[0].title).toContain('Schedule 10 / Round 42');
-      expect(channel.calls[0].body).toContain('failed to produce 1 or more blocks');
+      expect(channel.calls[0].body).toContain('badproducer produced 0 of 12');
     });
 
-    it('should format missedBlocks alert with schedule-relative round', async () => {
+    it('should format missedBlocks alert', async () => {
       await manager.missedBlocks({
         chain: 'libre',
         network: 'mainnet',
@@ -186,17 +186,21 @@ describe('AlertManager', () => {
       });
 
       expect(channel.calls[0].severity).toBe('warn');
+      expect(channel.calls[0].title).toContain('Missed Blocks');
       expect(channel.calls[0].title).toContain('Schedule 5 / Round 10');
-      expect(channel.calls[0].body).toContain('4 of 12 blocks missed');
+      expect(channel.calls[0].body).toContain('flaky produced 8 of 12');
     });
 
-    it('should not send roundComplete when no misses', async () => {
+    it('should not send roundComplete when no issues', async () => {
       await manager.roundComplete({
         chain: 'libre',
         network: 'mainnet',
         round: 5,
         producersProduced: 21,
         producersMissed: 0,
+        missedProducers: [],
+        partialProducers: [],
+        forks: [],
         scheduleVersion: 1,
         timestamp: '2026-03-30T00:00:00.000',
       });
@@ -204,20 +208,26 @@ describe('AlertManager', () => {
       expect(channel.send).not.toHaveBeenCalled();
     });
 
-    it('should send roundComplete when there are misses', async () => {
+    it('should send degraded round with full breakdown', async () => {
       await manager.roundComplete({
         chain: 'libre',
         network: 'mainnet',
         round: 5,
         producersProduced: 19,
         producersMissed: 2,
+        missedProducers: [{ producer: 'badprod1', expected: 12 }, { producer: 'badprod2', expected: 12 }],
+        partialProducers: [{ producer: 'flaky', produced: 8, missed: 4, expected: 12 }],
+        forks: [{ blockNumber: 100, originalProducer: 'bp1', replacementProducer: 'bp2' }],
         scheduleVersion: 1,
         timestamp: '2026-03-30T00:00:00.000',
       });
 
       expect(channel.send).toHaveBeenCalledTimes(1);
-      expect(channel.calls[0].body).toContain('19 produced');
-      expect(channel.calls[0].body).toContain('2 missed');
+      expect(channel.calls[0].severity).toBe('alert');
+      expect(channel.calls[0].title).toContain('Degraded Round');
+      expect(channel.calls[0].body).toContain('badprod1 produced 0 of 12');
+      expect(channel.calls[0].body).toContain('flaky produced 8 of 12');
+      expect(channel.calls[0].body).toContain('Forked Block: bp1 block 100 replaced by bp2');
     });
 
     it('should format scheduleChange alert', async () => {

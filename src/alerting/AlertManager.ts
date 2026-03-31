@@ -57,7 +57,7 @@ export class AlertManager {
     await Promise.all(sends);
   }
 
-  // Convenience methods
+  // -- Per-producer alerts (individual notifications) --
 
   async missedRound(params: {
     chain: string;
@@ -73,8 +73,8 @@ export class AlertManager {
       severity: 'alert',
       chain: params.chain,
       network: params.network,
-      title: `${params.producer} [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
-      body: `Producer ${params.producer} failed to produce 1 or more blocks in Schedule ${params.scheduleVersion} Round ${roundNum} (${params.blocksMissed} blocks missed)`,
+      title: `Missed Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
+      body: `\u274C Missed Round: ${params.producer} produced 0 of ${params.blocksMissed} blocks`,
       timestamp: params.timestamp,
     });
   }
@@ -95,11 +95,13 @@ export class AlertManager {
       severity: 'warn',
       chain: params.chain,
       network: params.network,
-      title: `${params.producer} [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
-      body: `Producer ${params.producer} failed to produce 1 or more blocks in Schedule ${params.scheduleVersion} Round ${roundNum} (${params.blocksMissed} of ${params.blocksExpected} blocks missed)`,
+      title: `Missed Blocks [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
+      body: `\u26A0\uFE0F Missed Blocks: ${params.producer} produced ${params.blocksProduced} of ${params.blocksExpected} blocks`,
       timestamp: params.timestamp,
     });
   }
+
+  // -- Round summary (degraded round alert) --
 
   async roundComplete(params: {
     chain: string;
@@ -107,22 +109,43 @@ export class AlertManager {
     round: number;
     producersProduced: number;
     producersMissed: number;
+    partialProducers?: Array<{ producer: string; produced: number; missed: number; expected: number }>;
+    missedProducers?: Array<{ producer: string; expected: number }>;
+    forks?: Array<{ blockNumber: number; originalProducer: string; replacementProducer: string }>;
     scheduleVersion: number;
     timestamp: string;
   }): Promise<void> {
-    // Only send round summaries when there are issues, or periodically
-    if (params.producersMissed === 0) return;
+    const missed = params.missedProducers || [];
+    const partial = params.partialProducers || [];
+    const forks = params.forks || [];
+
+    // Only send when round is degraded
+    if (missed.length === 0 && partial.length === 0 && forks.length === 0) return;
 
     const roundNum = params.round.toLocaleString();
+    const lines: string[] = [];
+
+    for (const m of missed) {
+      lines.push(`\u274C Missed Round: ${m.producer} produced 0 of ${m.expected} blocks`);
+    }
+    for (const p of partial) {
+      lines.push(`\u26A0\uFE0F Missed Blocks: ${p.producer} produced ${p.produced} of ${p.expected} blocks`);
+    }
+    for (const f of forks) {
+      lines.push(`\u26A0\uFE0F Forked Block: ${f.originalProducer} block ${f.blockNumber} replaced by ${f.replacementProducer}`);
+    }
+
     await this.sendAlert({
-      severity: params.producersMissed > 0 ? 'warn' : 'info',
+      severity: 'alert',
       chain: params.chain,
       network: params.network,
-      title: `Round Complete [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
-      body: `${params.producersProduced} produced, ${params.producersMissed} missed`,
+      title: `Degraded Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
+      body: lines.join('\n'),
       timestamp: params.timestamp,
     });
   }
+
+  // -- Schedule & producer events --
 
   async scheduleChange(params: {
     chain: string;
@@ -139,15 +162,13 @@ export class AlertManager {
     const removed = params.removed || [];
     const keyUpdates = params.keyUpdates || [];
 
-    // Build a descriptive title based on what actually changed
     let title: string;
     if (added.length === 0 && removed.length === 0 && keyUpdates.length > 0) {
-      title = `Schedule v${params.version} — key update`;
+      title = `Schedule v${params.version} — Key Update`;
     } else {
-      title = `Schedule change to v${params.version}`;
+      title = `Schedule Change to v${params.version}`;
     }
 
-    // Build a descriptive body
     const lines: string[] = [];
     lines.push(`Schedule v${params.version} (${params.producers.length} producers) at block ${params.blockNum}`);
     if (added.length > 0) lines.push(`Added: ${added.join(', ')}`);
@@ -171,17 +192,47 @@ export class AlertManager {
     chain: string;
     network: string;
     action: string;
+    producer: string;
     data: any;
     blockNum: number;
     timestamp: string;
   }): Promise<void> {
-    const actionLabel = params.action === 'regproducer' ? 'registered' : 'unregistered';
+    let actionLabel: string;
+    let severity: 'info' | 'warn' | 'alert';
+    if (params.action === 'regproducer') {
+      actionLabel = 'Registered';
+      severity = 'info';
+    } else if (params.action === 'kickbp') {
+      actionLabel = 'Kicked';
+      severity = 'warn';
+    } else {
+      actionLabel = 'Unregistered';
+      severity = 'info';
+    }
     await this.sendAlert({
-      severity: 'info',
+      severity,
       chain: params.chain,
       network: params.network,
-      title: `Producer ${actionLabel}`,
-      body: `${params.action} at block ${params.blockNum}`,
+      title: `Producer ${actionLabel}: ${params.producer}`,
+      body: `${params.producer} ${actionLabel.toLowerCase()} at block ${params.blockNum}`,
+      timestamp: params.timestamp,
+    });
+  }
+
+  async fork(params: {
+    chain: string;
+    network: string;
+    blockNumber: number;
+    originalProducer: string;
+    replacementProducer: string;
+    timestamp: string;
+  }): Promise<void> {
+    await this.sendAlert({
+      severity: 'warn',
+      chain: params.chain,
+      network: params.network,
+      title: `Forked Block [ block ${params.blockNumber} ]`,
+      body: `\u26A0\uFE0F Forked Block: ${params.originalProducer} block ${params.blockNumber} replaced by ${params.replacementProducer}`,
       timestamp: params.timestamp,
     });
   }

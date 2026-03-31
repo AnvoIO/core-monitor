@@ -203,6 +203,8 @@ export class ChainMonitor extends EventEmitter {
           timestamp: block.timestamp,
         });
 
+        this.roundEvaluator.recordFork(forkBlockNum, this.lastBlockProducer, block.producer);
+
         this.emit('fork', {
           chain: this.config.chain,
           network: this.config.network,
@@ -444,6 +446,9 @@ export class ChainMonitor extends EventEmitter {
       round: result.roundNumber,
       producersProduced: result.producersProduced,
       producersMissed: result.producersMissed,
+      partialProducers: partial.map(p => ({ producer: p.producer, produced: p.blocksProduced, missed: p.blocksMissed, expected: p.blocksExpected })),
+      missedProducers: missed.map(m => ({ producer: m.producer, expected: m.blocksExpected })),
+      forks: result.forks,
       scheduleVersion: result.scheduleVersion,
       timestamp: result.timestampEnd,
     });
