@@ -251,8 +251,26 @@ export class ChainMonitor extends EventEmitter {
       for (const actionTrace of trace.action_traces) {
         const { account, name } = actionTrace.act;
         if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod' || name === 'kickbp')) {
-          const producerName = actionTrace.act.authorization?.[0]?.actor
-            || String(actionTrace.act.data?.producer || '');
+          let producerName = '';
+
+          if (name === 'kickbp') {
+            // kickbp is executed by eosio — find the kicked producer from the
+            // unregprod inline action in the same transaction
+            for (const inlineTrace of trace.action_traces) {
+              if (inlineTrace.act.account === 'eosio' && inlineTrace.act.name === 'unregprod') {
+                producerName = inlineTrace.act.authorization?.[0]?.actor || '';
+                break;
+              }
+            }
+            if (!producerName) {
+              // Fallback: try to read from action data
+              const actData = actionTrace.act.data || {};
+              producerName = String(actData.producer || actData.producer_name || '');
+            }
+          } else {
+            producerName = actionTrace.act.authorization?.[0]?.actor
+              || String(actionTrace.act.data?.producer || '');
+          }
 
           await this.db.insertProducerEvent({
             chain: this.config.chain,
