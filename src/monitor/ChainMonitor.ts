@@ -263,7 +263,8 @@ export class ChainMonitor extends EventEmitter {
     // Producer registration events
     for (const trace of result.traces) {
       for (const actionTrace of trace.action_traces) {
-        const { account, name } = actionTrace.act;
+        const account = String(actionTrace.act.account);
+        const name = String(actionTrace.act.name);
         if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod' || name === 'kickbp')) {
           let producerName = '';
 
@@ -271,8 +272,8 @@ export class ChainMonitor extends EventEmitter {
             // kickbp is executed by eosio — find the kicked producer from the
             // unregprod inline action in the same transaction
             for (const inlineTrace of trace.action_traces) {
-              if (inlineTrace.act.account === 'eosio' && inlineTrace.act.name === 'unregprod') {
-                producerName = inlineTrace.act.authorization?.[0]?.actor || '';
+              if (String(inlineTrace.act.account) === 'eosio' && String(inlineTrace.act.name) === 'unregprod') {
+                producerName = String(inlineTrace.act.authorization?.[0]?.actor || '');
                 break;
               }
             }
@@ -282,7 +283,7 @@ export class ChainMonitor extends EventEmitter {
               producerName = String(actData.producer || actData.producer_name || '');
             }
           } else {
-            producerName = actionTrace.act.authorization?.[0]?.actor
+            producerName = String(actionTrace.act.authorization?.[0]?.actor || '')
               || String(actionTrace.act.data?.producer || '');
           }
 
