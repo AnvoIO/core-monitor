@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { Name, Serializer } from '@wharfkit/antelope';
 import { ShipClient } from '../ship/ShipClient.js';
 import { ScheduleTracker } from './ScheduleTracker.js';
 import { RoundEvaluator, type RoundResult, type BlockRecord } from './RoundEvaluator.js';
@@ -19,6 +20,7 @@ export class ChainMonitor extends EventEmitter {
   private lastBlockId: string = '';
   private lastBlockProducer: string = '';
   private pendingSchedule: { version: number; producers: Array<{ producer_name: string; block_signing_key: string }> } | null = null;
+  private processingBlock: Promise<void> = Promise.resolve();
 
   constructor(config: ChainConfig, db: Database) {
     super();
@@ -69,7 +71,11 @@ export class ChainMonitor extends EventEmitter {
     });
 
     this.ship.on('block', (result: ShipResult) => {
-      this.processBlock(result).catch(err => {
+      // Serialize block processing — wait for previous block to finish
+      // before starting the next to prevent duplicate round evaluations
+      this.processingBlock = this.processingBlock.then(() =>
+        this.processBlock(result)
+      ).catch(err => {
         this.log.error({ err }, 'Error processing block');
       });
     });
@@ -269,18 +275,23 @@ export class ChainMonitor extends EventEmitter {
           let producerName = '';
 
           if (name === 'kickbp') {
-            // kickbp is executed by eosio — find the kicked producer from the
-            // unregprod inline action in the same transaction
-            for (const inlineTrace of trace.action_traces) {
-              if (String(inlineTrace.act.account) === 'eosio' && String(inlineTrace.act.name) === 'unregprod') {
-                producerName = String(inlineTrace.act.authorization?.[0]?.actor || '');
-                break;
+            // kickbp action data is a single name (producer to kick)
+            // Decode from raw bytes: the data is an 8-byte encoded Antelope name
+            try {
+              const rawData = actionTrace.act.data;
+              const dataBytes = rawData?.array ?? rawData;
+              if (dataBytes && dataBytes.length >= 8) {
+                const decoded = Name.from(Serializer.decode({ data: dataBytes, type: 'name' }));
+                producerName = String(decoded);
               }
-            }
-            if (!producerName) {
-              // Fallback: try to read from action data
-              const actData = actionTrace.act.data || {};
-              producerName = String(actData.producer || actData.producer_name || '');
+            } catch {
+              // Fallback: check inline actions for unregprod
+              for (const inlineTrace of trace.action_traces) {
+                if (String(inlineTrace.act.account) === 'eosio' && String(inlineTrace.act.name) === 'unregprod') {
+                  producerName = String(inlineTrace.act.authorization?.[0]?.actor || '');
+                  break;
+                }
+              }
             }
           } else {
             producerName = String(actionTrace.act.authorization?.[0]?.actor || '')

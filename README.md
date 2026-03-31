@@ -11,30 +11,65 @@ Core Monitor tracks block producer performance in real-time using the State Hist
 - **Real-time SHiP streaming** — connects directly to nodeos state_history_plugin, no Hyperion dependency for live data
 - **Slot-based round detection** — deterministic round boundaries from Antelope timestamps, works correctly when any number of producers are offline
 - **WTMSIG support** — parses `producer_schedule_change_extension` from block header extensions for schedule change detection on chains with WTMSIG enabled
-- **Schedule lifecycle** — correctly handles proposed → pending → active schedule transitions
-- **Multi-chain support** — monitor multiple chains concurrently from a single instance
+- **Schedule lifecycle** — correctly handles proposed → pending → active schedule transitions, discards partial rounds at boundaries
+- **Multi-chain support** — monitor multiple chains concurrently from a single deployment
 - **Schedule-relative round numbering** — rounds numbered from schedule activation, reset on schedule changes
 - **Missed block detection** — per-producer, per-round tracking with configurable alerting
 - **Fork detection** — real-time microfork/fork identification from block ID mismatches
-- **Schedule change tracking** — detects new producer schedules, tracks additions/removals
-- **Producer registration events** — monitors regproducer/unregprod actions
+- **Schedule change tracking** — detects new producer schedules, tracks additions/removals, shows pending schedules
+- **Producer events** — monitors regproducer, unregprod, and kickbp actions
 - **Producer status** — Up/Degraded/Down based on actual block production in the latest round
-- **Historical data** — bulk loader for backfilling from full history SHiP nodes via CSV pipeline
+- **Historical backfill** — catchup writer streams from full-history SHiP nodes directly to PostgreSQL, automatically detects live writer boundary
 - **Dashboard** — web-based UI with producer reliability rankings, round history, event log, timeframe selector, UTC/local toggle, pagination
 - **REST API** — JSON endpoints for all monitored data with input validation
 - **Alerting** — Telegram and Slack with enable/disable flags and throttling
 - **Data retention** — configurable rolling window (default 18 months) with weekly/monthly summaries
-- **PostgreSQL** — production-grade persistence with connection pooling
-- **Docker deployment** — core-monitor + PostgreSQL via docker-compose
+- **PostgreSQL** — production-grade persistence with connection pooling and optimized indexes
+- **Docker deployment** — reader/writer/postgres via docker-compose
 - **CI** — GitHub Actions with PostgreSQL service container
+
+## Architecture
+
+The monitor runs as three separate containers:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Writer                                                       │
+│  SHiP WebSocket ──> ShipClient ──> ChainMonitor              │
+│                          │              │                      │
+│                          │              ├──> RoundEvaluator ──┤
+│                          │              ├──> Fork Detection    │──> PostgreSQL
+│                          │              └──> Producer Events   │
+│                          │                                     │
+│                          └──> AlertManager ──> Telegram/Slack  │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│  Reader                                                       │
+│  API (Fastify) ──> PostgreSQL (read-only)                     │
+│       └──> Dashboard (static HTML/JS)                         │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│  Catchup Writer (optional)                                    │
+│  Full-history SHiP ──> RoundEvaluator ──> PostgreSQL          │
+│  Streams from genesis, stops at live writer's start point     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+- **Writer** — streams live blocks from SHiP, evaluates rounds, writes to PostgreSQL, sends alerts
+- **Reader** — serves the dashboard and REST API, reads from PostgreSQL
+- **Catchup Writer** — optional service for backfilling historical data from a full-history SHiP node
+
+This separation ensures API responsiveness is never affected by block processing load.
 
 ## Requirements
 
-- Node.js 22+
-- Docker and Docker Compose (for deployment)
+- Docker and Docker Compose
 - PostgreSQL 17+ (runs in Docker)
 - Access to a nodeos instance with `state_history_plugin` enabled
 - Optional: Hyperion v2 endpoint for schedule activation timestamps
+- Optional: Full-history SHiP node for catchup backfill
 
 ## Quick Start
 
@@ -47,11 +82,25 @@ cd core-monitor
 cp .env.example .env
 # Edit .env with your SHiP endpoints, PostgreSQL credentials, and alerting config
 
-# Production (Docker)
+# Start (postgres + writer + reader)
 docker compose up -d --build
 ```
 
 The dashboard will be available at `http://localhost:3100` (or your configured `MONITOR_PORT`).
+
+### Historical Backfill
+
+To backfill from a full-history SHiP node while the live monitor continues running:
+
+```bash
+# Add to .env:
+CATCHUP_SHIP_URL=ws://your-history-node:8088
+
+# Start the catchup writer alongside the running services
+docker compose --profile catchup up -d catchup
+```
+
+The catchup writer automatically detects where the live writer started and stops there — no overlap, no manual coordination.
 
 ### Development
 
@@ -66,6 +115,8 @@ Requires a PostgreSQL instance (see `docker-compose.test.yml` for a test instanc
 
 All configuration is via environment variables (see `.env.example`):
 
+### Chain Configuration
+
 | Variable | Description | Default |
 |---|---|---|
 | `CHAINS` | Comma-separated chain IDs to monitor | required |
@@ -74,18 +125,81 @@ All configuration is via environment variables (see `.env.example`):
 | `{CHAIN}_API_URL` | Chain RPC endpoint | required |
 | `{CHAIN}_HYPERION_URL` | Hyperion v2 endpoint | optional |
 | `{CHAIN}_CHAIN_ID` | Expected chain ID | required |
+
+### Database
+
+| Variable | Description | Default |
+|---|---|---|
 | `POSTGRES_URL` | PostgreSQL connection string | required |
 | `POSTGRES_DB` | Database name | required |
 | `POSTGRES_USER` | Database user | required |
 | `POSTGRES_PASSWORD` | Database password | required |
+
+### Alerting (Writer)
+
+| Variable | Description | Default |
+|---|---|---|
 | `TELEGRAM_ENABLED` | Enable Telegram alerts | `false` |
 | `TELEGRAM_API_KEY` | Telegram Bot API token | optional |
 | `SLACK_ENABLED` | Enable Slack alerts | `false` |
 | `SLACK_WEBHOOK_URL` | Slack incoming webhook URL | optional |
+
+### API (Reader)
+
+| Variable | Description | Default |
+|---|---|---|
 | `API_PORT` | Dashboard/API listen port | `3000` |
 | `API_CORS_ORIGIN` | CORS allowed origin | `*` |
 | `MONITOR_PORT` | Host port mapping for Docker | `3100` |
-| `RETENTION_DAYS` | Data retention period | `548` (18 months) |
+
+### Catchup Writer
+
+| Variable | Description | Default |
+|---|---|---|
+| `CATCHUP_SHIP_URL` | SHiP endpoint for full-history node | optional |
+| `{CHAIN}_CATCHUP_SHIP_URL` | Per-chain override | optional |
+| `CATCHUP_START_BLOCK` | Start block for backfill | `1` |
+
+## Database
+
+### PostgreSQL Tuning
+
+For large datasets (millions of rounds), configure shared memory in `docker-compose.yml`:
+
+```yaml
+postgres:
+  shm_size: '1gb'
+```
+
+And tune PostgreSQL settings:
+
+```sql
+ALTER SYSTEM SET shared_buffers = '512MB';
+ALTER SYSTEM SET work_mem = '128MB';
+ALTER SYSTEM SET effective_cache_size = '2GB';
+```
+
+### Indexes
+
+The schema includes optimized indexes for the common query patterns. For large datasets, ensure these additional indexes exist:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_rounds_chain_ts ON rounds(chain, network, timestamp_start DESC);
+CREATE INDEX IF NOT EXISTS idx_rounds_chain_created ON rounds(chain, network, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_rounds_chain_id ON rounds(chain, network, id DESC);
+CREATE INDEX IF NOT EXISTS idx_rp_roundid_stats ON round_producers(round_id) INCLUDE (producer, blocks_produced, blocks_expected, blocks_missed);
+CREATE INDEX IF NOT EXISTS idx_rp_round_producer ON round_producers(round_id, producer, blocks_produced);
+CREATE INDEX IF NOT EXISTS idx_missed_chain_ts ON missed_block_events(chain, network, timestamp DESC);
+```
+
+### Storage
+
+For best performance, place the PostgreSQL data directory on fast storage (SSD/SAS). The docker-compose volume can be changed from a named volume to a bind mount:
+
+```yaml
+volumes:
+  - /path/to/fast/storage:/var/lib/postgresql/data
+```
 
 ## API Endpoints
 
@@ -94,10 +208,10 @@ All configuration is via environment variables (see `.env.example`):
 | `GET /` | Dashboard UI |
 | `GET /api/v1/health` | Health check |
 | `GET /api/v1/chains` | List monitored chains |
-| `GET /api/v1/:chain/:network/status` | Current monitor status, schedule activation, earliest data |
-| `GET /api/v1/:chain/:network/producers` | Producer reliability stats, signing keys, production status |
-| `GET /api/v1/:chain/:network/rounds` | Round history with pagination (`?limit=`, `?offset=`, `?since=`) |
-| `GET /api/v1/:chain/:network/events` | Event log with filtering (`?type=`, `?limit=`, `?offset=`, `?since=`, `?until=`) |
+| `GET /api/v1/:chain/:network/status` | Monitor status, schedule, pending schedule |
+| `GET /api/v1/:chain/:network/producers` | Producer reliability, signing keys, status |
+| `GET /api/v1/:chain/:network/rounds` | Round history (`?limit=`, `?offset=`, `?since=`) |
+| `GET /api/v1/:chain/:network/events` | Event log (`?type=`, `?limit=`, `?offset=`, `?since=`, `?until=`) |
 | `GET /api/v1/:chain/:network/summaries/weekly` | Weekly summaries |
 | `GET /api/v1/:chain/:network/summaries/monthly` | Monthly summaries |
 
@@ -111,19 +225,19 @@ The web dashboard provides:
 - **UTC/Local time toggle** — persisted in browser
 - **Producer table** — three sections: Scheduled, Standby, Unregistered
 - **Status badges** — Up (green), Degraded (yellow), Down (red) based on latest round
+- **Pending schedule indicator** — shows proposed schedule changes with added/removed producers
 - **Round and event pagination** — configurable page size (25/50/100)
 
-## Bulk Loading Historical Data
+## Security Recommendations
 
-The bulk loader streams blocks from a SHiP endpoint, writes CSV files, then imports into PostgreSQL. Run on the same machine as the SHiP node for best performance (~10K blocks/sec).
+When deploying to production:
 
-```bash
-# Phase 1: Generate CSVs on the SHiP host
-npx tsx src/bulk-loader.ts <ship_url> <api_url> <chain> <network> <start_block> [<end_block>]
-
-# Phase 2: Copy CSVs to the monitor host, then import
-POSTGRES_URL=postgresql://... npx tsx src/import-csv.ts <chain> <network> <csv_dir>
-```
+- **Change the default database password** — the `.env.example` uses `CHANGEME` as a placeholder. Generate a strong password before deploying.
+- **Set CORS origin** — change `API_CORS_ORIGIN` from `*` to your dashboard domain (e.g., `https://monitor.yourdomain.com`). Wildcard CORS should only be used in development.
+- **Use Cloudflare Access or reverse proxy auth** — the API endpoints are unauthenticated by default. Use Cloudflare Access, nginx basic auth, or a reverse proxy with authentication to restrict access. See issue #1.
+- **Enable rate limiting** — consider adding rate limiting at the reverse proxy level. See issue #2.
+- **Place PostgreSQL on fast storage** — use SSD or SAS for the Postgres data directory for best query performance with large datasets.
+- **Configure `shm_size`** — set `shm_size: '1gb'` (or higher) in docker-compose for PostgreSQL parallel query workers.
 
 ## Testing
 
@@ -135,11 +249,6 @@ docker compose -f docker-compose.test.yml up -d
 
 # Run all tests
 TEST_POSTGRES_URL=postgresql://test:test@localhost:15432/core_monitor_test npm test
-
-# Individual suites
-npm run test:unit
-npm run test:integration
-npm run test:e2e          # Requires network access to SHiP endpoints
 ```
 
 ## CI
@@ -148,24 +257,18 @@ GitHub Actions runs on all pull requests targeting `main` or `dev`:
 - PostgreSQL 17 service container
 - Node.js 22
 - Build verification
-- 88 tests across 10 test files
 - Docker image build
+- Cancels in-progress runs on new push
 
-## Architecture
+## Key Design Decisions
 
-```
-SHiP WebSocket ──> ShipClient ──> ChainMonitor ──> RoundEvaluator ──> PostgreSQL
-                                       │                                   │
-                                       ├──> AlertManager ──> Telegram      └──> API (Fastify)
-                                       │                 └──> Slack              └──> Dashboard
-                                       └──> Fork Detection
-```
-
-**Key design decisions:**
 - **Slot-based rounds** — `round = floor(slot / (scheduleSize * blocksPerBp))` where `slot = (timestamp - epoch) / 500ms`
 - **Schedule-relative numbering** — display round = global round - activation round
-- **Partial round discard** — first round after startup is always discarded (incomplete observation)
+- **Partial round discard** — first round after startup or schedule change is always discarded
 - **Pending schedule** — `new_producers` from block headers is stored as pending, only applied when `schedule_version` increments
+- **Serialized block processing** — blocks are processed sequentially via promise chain to prevent duplicate round evaluations
+- **Reader/writer separation** — API and SHiP processing run in separate containers for isolation
+- **Time filtering on `timestamp_start`** — queries filter on the round's actual timestamp, not the DB insertion time
 
 ## License
 

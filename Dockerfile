@@ -24,5 +24,10 @@ COPY --from=builder /app/src/api/static ./dist/api/static
 
 RUN mkdir -p /app/data
 
+RUN addgroup -S app && adduser -S app -G app
+USER app
+
 ENTRYPOINT ["/sbin/tini", "--"]
+# Default: combined mode (backwards compatible)
+# Override with "node dist/writer.js" or "node dist/reader.js"
 CMD ["node", "dist/index.js"]
