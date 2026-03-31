@@ -90,7 +90,8 @@ export class ScheduleTracker {
 
     const keyUpdates: string[] = [];
     for (const p of newProducers) {
-      if (oldKeys[p] && newKeys[p] && oldKeys[p] !== newKeys[p] && !added.includes(p)) {
+      const normOld = oldKeys[p] ? normalizeKey(oldKeys[p]) : undefined;
+      if (normOld && newKeys[p] && normOld !== newKeys[p] && !added.includes(p)) {
         keyUpdates.push(p);
       }
     }
