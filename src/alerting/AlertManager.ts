@@ -106,7 +106,7 @@ export class AlertManager {
   }): Promise<void> {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
-      severity: 'warn',
+      severity: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Missed Blocks [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -310,7 +310,7 @@ export class AlertManager {
     timestamp: string;
   }): Promise<void> {
     await this.sendAlert({
-      severity: 'warn',
+      severity: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Forked Block [ block ${params.blockNumber} ]`,

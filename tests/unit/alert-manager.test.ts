@@ -185,7 +185,7 @@ describe('AlertManager', () => {
         timestamp: '2026-03-30T00:00:00.000',
       });
 
-      expect(channel.calls[0].severity).toBe('warn');
+      expect(channel.calls[0].severity).toBe('alert');
       expect(channel.calls[0].title).toContain('Missed Blocks');
       expect(channel.calls[0].title).toContain('Schedule 5 / Round 10');
       expect(channel.calls[0].body).toContain('flaky produced 8 of 12');
