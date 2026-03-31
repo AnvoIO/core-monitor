@@ -443,7 +443,7 @@ export class Database {
       FROM round_producers rp
       JOIN rounds r ON rp.round_id = r.id
       WHERE r.chain = $1 AND r.network = $2 AND rp.producer = $3
-        AND r.created_at >= NOW() - ($4 || ' days')::INTERVAL
+        AND r.timestamp_start >= to_char(NOW() - ($4 || ' days')::INTERVAL, 'YYYY-MM-DD"T"HH24:MI:SS.MS')
       GROUP BY producer`,
       [chain, network, producer, days]
     );
@@ -454,10 +454,10 @@ export class Database {
     const params: any[] = [chain, network];
     let timeFilter: string;
     if (since) {
-      timeFilter = `AND r.created_at >= $3`;
+      timeFilter = `AND r.timestamp_start >= $3`;
       params.push(since);
     } else {
-      timeFilter = `AND r.created_at >= NOW() - ($3 || ' days')::INTERVAL`;
+      timeFilter = `AND r.timestamp_start >= to_char(NOW() - ($3 || ' days')::INTERVAL, 'YYYY-MM-DD"T"HH24:MI:SS.MS')`;
       params.push(days || 30);
     }
     const result = await this.pool.query(
@@ -488,10 +488,10 @@ export class Database {
     const params: any[] = [chain, network];
     let timeFilter: string;
     if (since) {
-      timeFilter = `AND r.created_at >= $3`;
+      timeFilter = `AND r.timestamp_start >= $3`;
       params.push(since);
     } else {
-      timeFilter = `AND r.created_at >= NOW() - ($3 || ' days')::INTERVAL`;
+      timeFilter = `AND r.timestamp_start >= to_char(NOW() - ($3 || ' days')::INTERVAL, 'YYYY-MM-DD"T"HH24:MI:SS.MS')`;
       params.push(days || 30);
     }
     const result = await this.pool.query(

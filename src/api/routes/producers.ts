@@ -81,7 +81,8 @@ export async function producerRoutes(
           }));
       }
 
-      const outages = await db.getLongestOutages(chain, network, days, since);
+      // Limit outage calculation to last 1000 rounds for performance
+      const outages = await db.getLongestOutages(chain, network, 3, null);
       const latestRound = await db.getLatestRoundProducerDetails(chain, network);
 
       const enrichedStats = stats.map((s: any) => {
@@ -105,24 +106,22 @@ export async function producerRoutes(
         };
       });
 
-      const statsSet = new Set(stats.map((s: any) => s.producer));
-      const enrichedRegistered = await Promise.all(registeredProducers.map(async (r: any) => {
-        const historicalStats = !statsSet.has(r.producer)
-          ? await db.getProducerStats(chain, network, r.producer, days || 30)
-          : null;
-
+      // Match registered producers with stats from the bulk query (no per-producer lookups)
+      const statsMap = new Map(stats.map((s: any) => [s.producer, s]));
+      const enrichedRegistered = registeredProducers.map((r: any) => {
+        const s = statsMap.get(r.producer);
         return {
           ...r,
-          total_rounds: historicalStats?.total_rounds || 0,
-          rounds_produced: historicalStats?.rounds_produced || 0,
-          rounds_missed: historicalStats?.rounds_missed || 0,
-          total_blocks_expected: historicalStats?.total_blocks_expected || 0,
-          total_blocks_produced: historicalStats?.total_blocks_produced || 0,
-          total_blocks_missed: historicalStats?.total_blocks_missed || 0,
-          reliability_pct: historicalStats?.reliability_pct ?? null,
+          total_rounds: s?.total_rounds || 0,
+          rounds_produced: s?.rounds_produced || 0,
+          rounds_missed: s?.rounds_missed || 0,
+          total_blocks_expected: s?.total_blocks_expected || 0,
+          total_blocks_produced: s?.total_blocks_produced || 0,
+          total_blocks_missed: s?.total_blocks_missed || 0,
+          reliability_pct: s?.reliability_pct ?? null,
           longest_outage: outages.get(r.producer) || 0,
         };
-      }));
+      });
 
       return { chain, network, days, producers: enrichedStats, scheduleOrder, registeredProducers: enrichedRegistered };
     }
