@@ -69,6 +69,7 @@ async function main(): Promise<void> {
     monitor.on('round_complete', (params) => alertManager.roundComplete(params));
     monitor.on('schedule_change', (params) => alertManager.scheduleChange(params));
     monitor.on('producer_action', (params) => alertManager.producerAction(params));
+    monitor.on('fork', (params) => alertManager.fork(params));
 
     monitor.on('fatal', (err) => {
       log.error({ err, chain: chainConfig.id }, 'Chain monitor fatal error');

@@ -15,6 +15,12 @@ export interface BlockRecord {
   schedule_version: number;
 }
 
+export interface RoundFork {
+  blockNumber: number;
+  originalProducer: string;
+  replacementProducer: string;
+}
+
 export interface RoundResult {
   roundNumber: number;
   scheduleVersion: number;
@@ -23,6 +29,7 @@ export interface RoundResult {
   producerResults: ProducerRoundResult[];
   producersProduced: number;
   producersMissed: number;
+  forks: RoundFork[];
 }
 
 export interface ProducerRoundResult {
@@ -55,6 +62,7 @@ export class RoundEvaluator {
   private firstRoundIsPartial: boolean = true;
 
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
+  private roundForks: RoundFork[] = [];
   private roundStartTimestamp: string = '';
   private roundEndTimestamp: string = '';
 
@@ -71,8 +79,8 @@ export class RoundEvaluator {
 
     const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}current_global_round`);
     this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
-    // Always discard the first round after startup — we never know if we
-    // observed it from the beginning, whether fresh start or resume
+    // Always discard the first round — in-memory roundBlocks is empty after
+    // restart, so the first round boundary would evaluate an incomplete round.
     this.firstRoundIsPartial = true;
 
     const savedActivation = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}schedule_activation_global_round`);
@@ -107,6 +115,7 @@ export class RoundEvaluator {
     // Discard the current in-progress round — it spans the schedule transition
     // and would be evaluated against the new producer list with incomplete data
     this.roundBlocks.clear();
+    this.roundForks = [];
     this.roundStartTimestamp = '';
     this.roundEndTimestamp = '';
     this.firstRoundIsPartial = true;
@@ -135,6 +144,7 @@ export class RoundEvaluator {
       this.currentGlobalRound = globalRound;
       this.roundStartTimestamp = timestamp;
       this.roundBlocks.clear();
+    this.roundForks = [];
     }
 
     if (globalRound > this.currentGlobalRound) {
@@ -158,6 +168,7 @@ export class RoundEvaluator {
 
       this.currentGlobalRound = globalRound;
       this.roundBlocks.clear();
+    this.roundForks = [];
       this.roundStartTimestamp = timestamp;
       this.roundEndTimestamp = '';
 
@@ -177,6 +188,10 @@ export class RoundEvaluator {
     await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}last_block`, String(block_num));
 
     return null;
+  }
+
+  recordFork(blockNumber: number, originalProducer: string, replacementProducer: string): void {
+    this.roundForks.push({ blockNumber, originalProducer, replacementProducer });
   }
 
   private addBlock(producer: string, blockNum: number): void {
@@ -205,6 +220,7 @@ export class RoundEvaluator {
         producerResults: [],
         producersProduced: 0,
         producersMissed: 0,
+        forks: [],
       };
     }
 
@@ -239,6 +255,7 @@ export class RoundEvaluator {
       producerResults,
       producersProduced,
       producersMissed,
+      forks: [...this.roundForks],
     };
 
     await this.persistRound(roundResult);

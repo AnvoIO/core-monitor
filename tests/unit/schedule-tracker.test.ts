@@ -24,8 +24,8 @@ describe('ScheduleTracker', () => {
   });
 
   it('should accept initial schedule', async () => {
-    const changed = await tracker.updateSchedule(1, makeProducers(['bp1', 'bp2']), 1000, '2026-03-30T00:00:00.000');
-    expect(changed).toBe(true);
+    const result = await tracker.updateSchedule(1, makeProducers(['bp1', 'bp2']), 1000, '2026-03-30T00:00:00.000');
+    expect(result).toBeTruthy();
     expect(tracker.version).toBe(1);
     expect(tracker.producers).toEqual(['bp1', 'bp2']);
   });

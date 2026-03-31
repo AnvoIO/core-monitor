@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { Name, Serializer } from '@wharfkit/antelope';
+import { Name, PublicKey, Serializer } from '@wharfkit/antelope';
 import { ShipClient } from '../ship/ShipClient.js';
 import { ScheduleTracker } from './ScheduleTracker.js';
 import { RoundEvaluator, type RoundResult, type BlockRecord } from './RoundEvaluator.js';
@@ -169,12 +169,30 @@ export class ChainMonitor extends EventEmitter {
     if (this.ship) this.ship.disconnect();
   }
 
+  private scheduleVerified: boolean = false;
+
   private async processBlock(result: ShipResult): Promise<void> {
     if (!result.this_block || !result.block) return;
 
     const blockNum = result.this_block.block_num;
     const blockId = result.this_block.block_id;
     const block = result.block;
+
+    // On first block, verify our schedule matches the chain's active schedule.
+    // If we missed transitions during downtime, re-bootstrap from RPC.
+    if (!this.scheduleVerified) {
+      this.scheduleVerified = true;
+      if (block.schedule_version > this.schedule.version) {
+        this.log.warn(
+          { stored: this.schedule.version, chain: block.schedule_version },
+          'Schedule version mismatch on startup — re-bootstrapping from RPC'
+        );
+        await this.fetchSchedule();
+        // Clear stale pending schedule that may reference the now-active version
+        this.pendingSchedule = null;
+        await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', '');
+      }
+    }
 
     // Fork detection
     if (this.lastBlockId && result.prev_block) {
@@ -203,6 +221,8 @@ export class ChainMonitor extends EventEmitter {
           timestamp: block.timestamp,
         });
 
+        this.roundEvaluator.recordFork(forkBlockNum, this.lastBlockProducer, block.producer);
+
         this.emit('fork', {
           chain: this.config.chain,
           network: this.config.network,
@@ -224,19 +244,37 @@ export class ChainMonitor extends EventEmitter {
       this.pendingSchedule = block.new_producers;
       const pendingProducers = block.new_producers.producers.map((p) => p.producer_name);
       const currentProducers = this.schedule.producers;
+      const currentKeys = this.schedule.producerKeys;
       const added = pendingProducers.filter((p: string) => !currentProducers.includes(p));
       const removed = currentProducers.filter(p => !pendingProducers.includes(p));
+
+      // Detect key-only changes: same producer, different signing key
+      // Normalize to legacy format so RPC (EOS...) and SHiP (PUB_K1_...) keys compare equal
+      const keyUpdates: string[] = [];
+      for (const p of block.new_producers.producers) {
+        const oldKey = currentKeys[p.producer_name];
+        if (oldKey && !added.includes(p.producer_name)) {
+          let newKey: string;
+          try { newKey = PublicKey.from(p.block_signing_key).toLegacyString(); } catch { newKey = p.block_signing_key; }
+          let normOld: string;
+          try { normOld = PublicKey.from(oldKey).toLegacyString(); } catch { normOld = oldKey; }
+          if (normOld !== newKey) {
+            keyUpdates.push(p.producer_name);
+          }
+        }
+      }
 
       await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', JSON.stringify({
         version: block.new_producers.version,
         producers: pendingProducers,
         added,
         removed,
+        keyUpdates,
         blockNum,
       }));
 
       this.log.info(
-        { version: block.new_producers.version, blockNum, added, removed },
+        { version: block.new_producers.version, blockNum, added, removed, keyUpdates: keyUpdates.length > 0 ? keyUpdates : undefined },
         'Pending schedule detected (not yet active)'
       );
     }
@@ -244,13 +282,13 @@ export class ChainMonitor extends EventEmitter {
     // The schedule_version in the block header tells us which schedule is
     // actually ACTIVE. When it increments, apply the pending schedule.
     if (block.schedule_version > this.schedule.version && this.pendingSchedule) {
-      const changed = await this.schedule.updateSchedule(
+      const result = await this.schedule.updateSchedule(
         this.pendingSchedule.version,
         this.pendingSchedule.producers,
         blockNum,
         block.timestamp
       );
-      if (changed) {
+      if (result) {
         await this.roundEvaluator.setScheduleActivation(block.timestamp);
 
         this.emit('schedule_change', {
@@ -258,6 +296,9 @@ export class ChainMonitor extends EventEmitter {
           network: this.config.network,
           version: this.pendingSchedule.version,
           producers: this.pendingSchedule.producers.map((p) => p.producer_name),
+          added: result.added,
+          removed: result.removed,
+          keyUpdates: result.keyUpdates,
           blockNum,
           timestamp: block.timestamp,
         });
@@ -423,6 +464,9 @@ export class ChainMonitor extends EventEmitter {
       round: result.roundNumber,
       producersProduced: result.producersProduced,
       producersMissed: result.producersMissed,
+      partialProducers: partial.map(p => ({ producer: p.producer, produced: p.blocksProduced, missed: p.blocksMissed, expected: p.blocksExpected })),
+      missedProducers: missed.map(m => ({ producer: m.producer, expected: m.blocksExpected })),
+      forks: result.forks,
       scheduleVersion: result.scheduleVersion,
       timestamp: result.timestampEnd,
     });
