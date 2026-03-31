@@ -250,7 +250,7 @@ export class ChainMonitor extends EventEmitter {
     for (const trace of result.traces) {
       for (const actionTrace of trace.action_traces) {
         const { account, name } = actionTrace.act;
-        if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod')) {
+        if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod' || name === 'kickbp')) {
           const producerName = actionTrace.act.authorization?.[0]?.actor
             || String(actionTrace.act.data?.producer || '');
 

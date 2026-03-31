@@ -524,7 +524,11 @@
         ...missed.map(e => ({ severity: 'red', text: `${esc(e.producer)} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
         ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${esc(e.original_producer)} replaced by ${esc(e.replacement_producer)} at block ${e.block_number}`, time: e.timestamp })),
         ...schedules.map(e => ({ severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
-        ...producerEvents.map(e => ({ severity: e.action === 'regproducer' ? 'green' : 'purple', text: `${esc(e.producer)} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`, time: e.timestamp })),
+        ...producerEvents.map(e => {
+          const label = e.action === 'regproducer' ? 'registered' : e.action === 'kickbp' ? 'kicked' : 'unregistered';
+          const sev = e.action === 'regproducer' ? 'green' : e.action === 'kickbp' ? 'orange' : 'purple';
+          return { severity: sev, text: `${esc(e.producer)} ${label} at block ${e.block_number}`, time: e.timestamp };
+        }),
       ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
       const hasMore = all.length >= eventLimit;
@@ -535,7 +539,7 @@
         return;
       }
 
-      const colorMap = { red: 'var(--red)', yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)', purple: 'var(--purple)' };
+      const colorMap = { red: 'var(--red)', yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)', purple: 'var(--purple)', orange: 'var(--orange)' };
       const rows = all.map(e => `
         <tr class="event-row">
           <td class="severity"><div class="severity-bar" style="background:${colorMap[e.severity]}"></div></td>
