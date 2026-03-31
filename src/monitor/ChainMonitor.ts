@@ -169,12 +169,27 @@ export class ChainMonitor extends EventEmitter {
     if (this.ship) this.ship.disconnect();
   }
 
+  private scheduleVerified: boolean = false;
+
   private async processBlock(result: ShipResult): Promise<void> {
     if (!result.this_block || !result.block) return;
 
     const blockNum = result.this_block.block_num;
     const blockId = result.this_block.block_id;
     const block = result.block;
+
+    // On first block, verify our schedule matches the chain's active schedule.
+    // If we missed transitions during downtime, re-bootstrap from RPC.
+    if (!this.scheduleVerified) {
+      this.scheduleVerified = true;
+      if (block.schedule_version > this.schedule.version) {
+        this.log.warn(
+          { stored: this.schedule.version, chain: block.schedule_version },
+          'Schedule version mismatch on startup — re-bootstrapping from RPC'
+        );
+        await this.fetchSchedule();
+      }
+    }
 
     // Fork detection
     if (this.lastBlockId && result.prev_block) {
