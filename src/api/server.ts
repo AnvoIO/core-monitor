@@ -14,15 +14,30 @@ const log = logger.child({ module: 'API' });
 
 export async function createServer(config: AppConfig, db: Database) {
   const app = Fastify({
-    logger: true,
+    logger: { level: process.env.LOG_LEVEL || 'info' },
   });
 
-  // CORS — configurable via API_CORS_ORIGIN env var (default: *)
-  const corsOrigin = config.api.corsOrigin;
+  // Security headers
   app.addHook('onSend', async (request, reply) => {
-    reply.header('Access-Control-Allow-Origin', corsOrigin);
+    // CORS — configurable via API_CORS_ORIGIN env var
+    reply.header('Access-Control-Allow-Origin', config.api.corsOrigin);
     reply.header('Access-Control-Allow-Methods', 'GET');
     reply.header('Access-Control-Allow-Headers', 'Content-Type');
+    // Security headers
+    reply.header('X-Frame-Options', 'DENY');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  });
+
+  // Validate chain/network params against configured chains
+  const validChains = new Set(config.chains.map(c => `${c.chain}:${c.network}`));
+  app.addHook('preHandler', async (request, reply) => {
+    const params = request.params as any;
+    if (params?.chain && params?.network) {
+      if (!validChains.has(`${params.chain}:${params.network}`)) {
+        reply.status(404).send({ error: 'Unknown chain/network' });
+      }
+    }
   });
 
   // Custom error handler — avoid leaking internals

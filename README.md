@@ -19,7 +19,7 @@ Core Monitor tracks block producer performance in real-time using the State Hist
 - **Schedule change tracking** — detects new producer schedules, tracks additions/removals, shows pending schedules
 - **Producer events** — monitors regproducer, unregprod, and kickbp actions
 - **Producer status** — Up/Degraded/Down based on actual block production in the latest round
-- **Historical backfill** — catchup writer streams from full-history SHiP nodes directly to PostgreSQL
+- **Historical backfill** — catchup writer streams from full-history SHiP nodes directly to PostgreSQL, automatically detects live writer boundary
 - **Dashboard** — web-based UI with producer reliability rankings, round history, event log, timeframe selector, UTC/local toggle, pagination
 - **REST API** — JSON endpoints for all monitored data with input validation
 - **Alerting** — Telegram and Slack with enable/disable flags and throttling
@@ -227,6 +227,17 @@ The web dashboard provides:
 - **Status badges** — Up (green), Degraded (yellow), Down (red) based on latest round
 - **Pending schedule indicator** — shows proposed schedule changes with added/removed producers
 - **Round and event pagination** — configurable page size (25/50/100)
+
+## Security Recommendations
+
+When deploying to production:
+
+- **Change the default database password** — the `.env.example` uses `CHANGEME` as a placeholder. Generate a strong password before deploying.
+- **Set CORS origin** — change `API_CORS_ORIGIN` from `*` to your dashboard domain (e.g., `https://monitor.yourdomain.com`). Wildcard CORS should only be used in development.
+- **Use Cloudflare Access or reverse proxy auth** — the API endpoints are unauthenticated by default. Use Cloudflare Access, nginx basic auth, or a reverse proxy with authentication to restrict access. See issue #1.
+- **Enable rate limiting** — consider adding rate limiting at the reverse proxy level. See issue #2.
+- **Place PostgreSQL on fast storage** — use SSD or SAS for the Postgres data directory for best query performance with large datasets.
+- **Configure `shm_size`** — set `shm_size: '1gb'` (or higher) in docker-compose for PostgreSQL parallel query workers.
 
 ## Testing
 

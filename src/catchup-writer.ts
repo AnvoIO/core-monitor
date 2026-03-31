@@ -118,7 +118,9 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
         log.info({ version: data.active.version }, 'Schedule bootstrapped from RPC');
       }
     }
-  } catch {}
+  } catch (err) {
+    log.warn({ err }, 'Failed — will detect from block headers');
+  }
 
   const state: CatchupChain = {
     config: chainConfig,
@@ -230,7 +232,9 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
               const decoded = Name.from(Serializer.decode({ data: dataBytes, type: 'name' }));
               producerName = String(decoded);
             }
-          } catch {}
+          } catch (err) {
+    log.warn({ err }, 'Failed — will detect from block headers');
+  }
         } else {
           producerName = String(actionTrace.act.authorization?.[0]?.actor || '');
         }

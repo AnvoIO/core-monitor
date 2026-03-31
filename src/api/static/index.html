@@ -334,7 +334,7 @@
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-card">
           <div class="label">Schedule</div>
-          <div class="value mono">${scheduleVersion}${pending ? ' <span style="font-size:12px;color:var(--orange)">→ ' + pending.version + ' proposed</span>' : ''}</div>
+          <div class="value mono">${esc(String(scheduleVersion))}${pending ? ' <span style="font-size:12px;color:var(--orange)">→ ' + esc(String(pending.version)) + ' proposed</span>' : ''}</div>
           <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}${pending ? '<br>+' + esc((pending.added||[]).join(', ')) + (pending.removed?.length ? ' / -' + esc((pending.removed||[]).join(', ')) : '') : ''}</div>
         </div>
         <div class="stat-card">
@@ -526,7 +526,7 @@
       const all = [
         ...missed.map(e => ({ severity: 'red', text: `${esc(e.producer)} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
         ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${esc(e.original_producer)} replaced by ${esc(e.replacement_producer)} at block ${e.block_number}`, time: e.timestamp })),
-        ...schedules.map(e => ({ severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
+        ...schedules.map(e => { try { return { severity: 'blue', text: `Schedule ${esc(String(e.schedule_version))} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp }; } catch { return { severity: 'blue', text: `Schedule ${esc(String(e.schedule_version))}`, time: e.timestamp }; } }),
         ...producerEvents.map(e => {
           const label = e.action === 'regproducer' ? 'registered' : e.action === 'kickbp' ? 'kicked' : 'unregistered';
           const sev = e.action === 'regproducer' ? 'green' : e.action === 'kickbp' ? 'orange' : 'purple';
