@@ -447,7 +447,7 @@ export class Database {
     let sql = 'SELECT * FROM rounds WHERE chain = $1 AND network = $2';
     let idx = 3;
     if (since) { sql += ` AND timestamp_start >= $${idx++}`; params.push(since); }
-    sql += ` ORDER BY id DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    sql += ` ORDER BY timestamp_start DESC LIMIT $${idx++} OFFSET $${idx++}`;
     params.push(limit, offset);
     const result = await this.pool.query(sql, params);
     return result.rows;
@@ -459,7 +459,7 @@ export class Database {
        FROM round_producers rp
        JOIN rounds r ON rp.round_id = r.id
        WHERE r.chain = $1 AND r.network = $2
-         AND r.id = (SELECT MAX(id) FROM rounds WHERE chain = $1 AND network = $2)`,
+         AND r.id = (SELECT id FROM rounds WHERE chain = $1 AND network = $2 ORDER BY timestamp_start DESC LIMIT 1)`,
       [chain, network]
     );
     const map = new Map<string, { produced: number; expected: number }>();
