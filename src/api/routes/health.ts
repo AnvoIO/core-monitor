@@ -19,23 +19,25 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
         const firstCompleteRound = await db.getState(chain, network, 'first_complete_round');
         const lastBlock = await db.getState(chain, network, 'last_block');
         const scheduleJson = await db.getState(chain, network, 'schedule');
+        const pendingJson = await db.getState(chain, network, 'pending_schedule');
 
         let schedule = null;
         if (scheduleJson) {
-          try {
-            schedule = JSON.parse(scheduleJson);
-          } catch {}
+          try { schedule = JSON.parse(scheduleJson); } catch {}
+        }
+
+        let pendingSchedule = null;
+        if (pendingJson) {
+          try { pendingSchedule = JSON.parse(pendingJson); } catch {}
         }
 
         const globalRound = currentGlobalRound ? parseInt(currentGlobalRound, 10) : 0;
         const activationRound = activationGlobalRound ? parseInt(activationGlobalRound, 10) : 0;
         const displayRound = globalRound - activationRound;
 
-        // Get schedule activation details
         const scheduleChanges = await db.getScheduleChanges(chain, network, 1);
         const latestSchedule = scheduleChanges.length > 0 ? scheduleChanges[0] : null;
 
-        // Get earliest data (oldest round, ASC)
         const earliestRounds = await db.getEarliestRounds(chain, network, 1);
 
         return {
@@ -54,6 +56,7 @@ export async function healthRoutes(app: FastifyInstance, db?: Database): Promise
             roundNumber: earliestRounds[0].round_number,
             timestamp: earliestRounds[0].timestamp_start,
           } : null,
+          pendingSchedule,
         };
       }
     );

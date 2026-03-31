@@ -216,8 +216,21 @@ export class ChainMonitor extends EventEmitter {
     // represents a PROPOSED schedule, not yet active. Store it as pending.
     if (block.new_producers && block.new_producers.version > this.schedule.version) {
       this.pendingSchedule = block.new_producers;
+      const pendingProducers = block.new_producers.producers.map((p) => p.producer_name);
+      const currentProducers = this.schedule.producers;
+      const added = pendingProducers.filter((p: string) => !currentProducers.includes(p));
+      const removed = currentProducers.filter(p => !pendingProducers.includes(p));
+
+      await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', JSON.stringify({
+        version: block.new_producers.version,
+        producers: pendingProducers,
+        added,
+        removed,
+        blockNum,
+      }));
+
       this.log.info(
-        { version: block.new_producers.version, blockNum },
+        { version: block.new_producers.version, blockNum, added, removed },
         'Pending schedule detected (not yet active)'
       );
     }
@@ -244,15 +257,37 @@ export class ChainMonitor extends EventEmitter {
         });
       }
       this.pendingSchedule = null;
+      await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', '');
     }
 
     // Producer registration events
     for (const trace of result.traces) {
       for (const actionTrace of trace.action_traces) {
-        const { account, name } = actionTrace.act;
-        if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod')) {
-          const producerName = actionTrace.act.authorization?.[0]?.actor
-            || String(actionTrace.act.data?.producer || '');
+        const account = String(actionTrace.act.account);
+        const name = String(actionTrace.act.name);
+        if (account === 'eosio' && (name === 'regproducer' || name === 'unregprod' || name === 'kickbp')) {
+          let producerName = '';
+
+          if (name === 'kickbp') {
+            // kickbp is executed by eosio — find the kicked producer from the
+            // unregprod inline action in the same transaction
+            for (const inlineTrace of trace.action_traces) {
+              if (String(inlineTrace.act.account) === 'eosio' && String(inlineTrace.act.name) === 'unregprod') {
+                producerName = String(inlineTrace.act.authorization?.[0]?.actor || '');
+                break;
+              }
+            }
+            if (!producerName) {
+              // Fallback: try to read from action data
+              const actData = actionTrace.act.data || {};
+              producerName = String(actData.producer || actData.producer_name || '');
+            }
+          } else {
+            producerName = String(actionTrace.act.authorization?.[0]?.actor || '')
+              || String(actionTrace.act.data?.producer || '');
+          }
+
+          if (!producerName || producerName === 'eosio') continue;
 
           await this.db.insertProducerEvent({
             chain: this.config.chain,
@@ -272,6 +307,28 @@ export class ChainMonitor extends EventEmitter {
             blockNum,
             timestamp: block.timestamp,
           });
+
+          // kickbp implies unregprod — log both events
+          if (name === 'kickbp') {
+            await this.db.insertProducerEvent({
+              chain: this.config.chain,
+              network: this.config.network,
+              producer: producerName,
+              action: 'unregprod',
+              block_number: blockNum,
+              timestamp: block.timestamp,
+            });
+
+            this.emit('producer_action', {
+              chain: this.config.chain,
+              network: this.config.network,
+              action: 'unregprod',
+              producer: producerName,
+              data: actionTrace.act.data,
+              blockNum,
+              timestamp: block.timestamp,
+            });
+          }
         }
       }
     }

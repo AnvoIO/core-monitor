@@ -169,7 +169,7 @@
   <footer>
     &copy; 2026 <a href="https://anvo.io">AnvoIO</a> &mdash;
     <a href="https://github.com/AnvoIO/core-monitor">AnvoIO/core-monitor</a>
-    <span style="margin-left:8px">v0.1.1</span>
+    <span style="margin-left:8px">v0.1.2</span>
   </footer>
 
   <script>
@@ -292,7 +292,7 @@
       const roundOffset = roundPage * roundLimit;
 
       const [producers, rounds, events, status] = await Promise.all([
-        fetchJSON(`/api/v1/${chain}/${network}/producers?days=${days}`),
+        fetchJSON(`/api/v1/${chain}/${network}/producers${since ? '?since=' + since : '?days=' + days}`),
         fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=${roundLimit}&offset=${roundOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/events?limit=${eventLimit}&offset=${eventOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/status`).catch(() => null),
@@ -319,20 +319,23 @@
       const firstRound = status?.firstCompleteRound;
       const activation = status?.scheduleActivation;
       const earliest = status?.earliestData;
+      const pending = status?.pendingSchedule;
 
       const avgReliability = prods.length > 0
         ? (prods.reduce((s, p) => s + parseFloat(p.reliability_pct || 0), 0) / prods.length).toFixed(2)
         : '—';
 
-      const perfectRounds = rds.filter(r => r.producers_missed === 0).length;
-      const issueRounds = rds.filter(r => r.producers_missed > 0).length;
+      const counts = rounds.counts || { total: rds.length, perfect: 0, issues: 0 };
+      const perfectRounds = counts.perfect;
+      const issueRounds = counts.issues;
+      const totalRounds = counts.total;
       const tf = document.getElementById('timeframe').selectedOptions[0].text.toLowerCase();
 
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-card">
           <div class="label">Schedule</div>
-          <div class="value mono">${scheduleVersion}</div>
-          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}</div>
+          <div class="value mono">${scheduleVersion}${pending ? ' <span style="font-size:12px;color:var(--orange)">→ ' + pending.version + ' proposed</span>' : ''}</div>
+          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}${pending ? '<br>+' + esc((pending.added||[]).join(', ')) + (pending.removed?.length ? ' / -' + esc((pending.removed||[]).join(', ')) : '') : ''}</div>
         </div>
         <div class="stat-card">
           <div class="label">Current Round</div>
@@ -347,12 +350,12 @@
         <div class="stat-card">
           <div class="label">Perfect Rounds</div>
           <div class="value" style="color: var(--green)">${perfectRounds}</div>
-          <div class="sub">of ${rds.length} in ${tf}</div>
+          <div class="sub">of ${totalRounds.toLocaleString()} in ${tf}</div>
         </div>
         <div class="stat-card">
           <div class="label">Rounds with Issues</div>
           <div class="value" style="color: ${issueRounds > 0 ? 'var(--yellow)' : 'var(--green)'}">${issueRounds}</div>
-          <div class="sub">of ${rds.length} in ${tf}</div>
+          <div class="sub">of ${totalRounds.toLocaleString()} in ${tf}</div>
         </div>
       `;
     }
@@ -524,7 +527,11 @@
         ...missed.map(e => ({ severity: 'red', text: `${esc(e.producer)} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
         ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${esc(e.original_producer)} replaced by ${esc(e.replacement_producer)} at block ${e.block_number}`, time: e.timestamp })),
         ...schedules.map(e => ({ severity: 'blue', text: `Schedule ${e.schedule_version} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp })),
-        ...producerEvents.map(e => ({ severity: e.action === 'regproducer' ? 'green' : 'purple', text: `${esc(e.producer)} ${e.action === 'regproducer' ? 'registered' : 'unregistered'} at block ${e.block_number}`, time: e.timestamp })),
+        ...producerEvents.map(e => {
+          const label = e.action === 'regproducer' ? 'registered' : e.action === 'kickbp' ? 'kicked' : 'unregistered';
+          const sev = e.action === 'regproducer' ? 'green' : e.action === 'kickbp' ? 'orange' : 'purple';
+          return { severity: sev, text: `${esc(e.producer)} ${label} at block ${e.block_number}`, time: e.timestamp };
+        }),
       ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
 
       const hasMore = all.length >= eventLimit;
@@ -535,7 +542,7 @@
         return;
       }
 
-      const colorMap = { red: 'var(--red)', yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)', purple: 'var(--purple)' };
+      const colorMap = { red: 'var(--red)', yellow: 'var(--yellow)', blue: 'var(--blue)', green: 'var(--green)', purple: 'var(--purple)', orange: 'var(--orange)' };
       const rows = all.map(e => `
         <tr class="event-row">
           <td class="severity"><div class="severity-bar" style="background:${colorMap[e.severity]}"></div></td>

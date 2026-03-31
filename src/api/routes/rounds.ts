@@ -23,8 +23,11 @@ export async function roundRoutes(
       const limit = Math.max(1, Math.min(parseInt(request.query.limit || '100', 10) || 100, 500));
       const offset = Math.max(0, parseInt(request.query.offset || '0', 10) || 0);
       const since = request.query.since && /^\d{4}-\d{2}-\d{2}/.test(request.query.since) ? request.query.since : null;
-      const rounds = await db.getRecentRounds(chain, network, limit, offset, since);
-      return { chain, network, rounds };
+      const [rounds, counts] = await Promise.all([
+        db.getRecentRounds(chain, network, limit, offset, since),
+        db.getRoundCounts(chain, network, since),
+      ]);
+      return { chain, network, rounds, counts };
     }
   );
 

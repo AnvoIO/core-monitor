@@ -10,6 +10,7 @@ interface ProducerParams {
 
 interface ProducerQuery {
   days?: string;
+  since?: string;
 }
 
 async function fetchRegisteredProducers(apiUrl: string): Promise<any[]> {
@@ -42,8 +43,9 @@ export async function producerRoutes(
     '/api/v1/:chain/:network/producers',
     async (request) => {
       const { chain, network } = request.params;
-      const days = Math.max(1, Math.min(parseInt(request.query.days || '30', 10) || 30, 9999));
-      const stats = await db.getAllProducerStats(chain, network, days);
+      const since = request.query.since && /^\d{4}-\d{2}-\d{2}/.test(request.query.since) ? request.query.since : null;
+      const days = since ? null : Math.max(1, Math.min(parseInt(request.query.days || '30', 10) || 30, 9999));
+      const stats = await db.getAllProducerStats(chain, network, days, since);
 
       let scheduleOrder: string[] = [];
       const scheduleJson = await db.getState(chain, network, 'schedule');
@@ -79,7 +81,7 @@ export async function producerRoutes(
           }));
       }
 
-      const outages = await db.getLongestOutages(chain, network, days);
+      const outages = await db.getLongestOutages(chain, network, days, since);
       const latestRound = await db.getLatestRoundProducerDetails(chain, network);
 
       const enrichedStats = stats.map((s: any) => {
@@ -106,7 +108,7 @@ export async function producerRoutes(
       const statsSet = new Set(stats.map((s: any) => s.producer));
       const enrichedRegistered = await Promise.all(registeredProducers.map(async (r: any) => {
         const historicalStats = !statsSet.has(r.producer)
-          ? await db.getProducerStats(chain, network, r.producer, days)
+          ? await db.getProducerStats(chain, network, r.producer, days || 30)
           : null;
 
         return {
