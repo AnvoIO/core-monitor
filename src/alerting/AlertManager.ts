@@ -246,9 +246,9 @@ export class AlertManager {
 
     let title: string;
     if (added.length === 0 && removed.length === 0 && keyUpdates.length > 0) {
-      title = `Schedule v${params.version} — Key Update`;
+      title = `Schedule v${params.version} Now Active — Key Update`;
     } else {
-      title = `Schedule Change to v${params.version}`;
+      title = `Schedule v${params.version} Now Active`;
     }
 
     const lines: string[] = [];
