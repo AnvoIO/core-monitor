@@ -20,6 +20,7 @@ export class ChainMonitor extends EventEmitter {
   private lastBlockId: string = '';
   private lastBlockProducer: string = '';
   private pendingSchedule: { version: number; producers: Array<{ producer_name: string; block_signing_key: string }> } | null = null;
+  private processingBlock: Promise<void> = Promise.resolve();
 
   constructor(config: ChainConfig, db: Database) {
     super();
@@ -70,7 +71,11 @@ export class ChainMonitor extends EventEmitter {
     });
 
     this.ship.on('block', (result: ShipResult) => {
-      this.processBlock(result).catch(err => {
+      // Serialize block processing — wait for previous block to finish
+      // before starting the next to prevent duplicate round evaluations
+      this.processingBlock = this.processingBlock.then(() =>
+        this.processBlock(result)
+      ).catch(err => {
         this.log.error({ err }, 'Error processing block');
       });
     });
