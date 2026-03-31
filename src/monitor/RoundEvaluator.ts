@@ -79,9 +79,9 @@ export class RoundEvaluator {
 
     const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}current_global_round`);
     this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
-    // Always discard the first round after startup — we never know if we
-    // observed it from the beginning, whether fresh start or resume
-    this.firstRoundIsPartial = true;
+    // Only discard the first round on fresh start (no saved state).
+    // When resuming from last_block, we pick up exactly where we left off.
+    this.firstRoundIsPartial = !savedGlobalRound;
 
     const savedActivation = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}schedule_activation_global_round`);
     this.scheduleActivationGlobalRound = savedActivation ? parseInt(savedActivation, 10) : 0;
