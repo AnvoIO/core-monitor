@@ -37,3 +37,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  # Optional: run with `docker compose up -d catchup` to backfill history
+  catchup:
+    build: .
+    container_name: anvoio-core-monitor-catchup
+    env_file: .env
+    command: ["node", "dist/catchup-writer.js"]
+    profiles: ["catchup"]
+    depends_on:
+      postgres:
+        condition: service_healthy
