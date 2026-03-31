@@ -16,14 +16,24 @@ services:
       timeout: 5s
       retries: 5
 
-  core-monitor:
+  writer:
     build: .
-    container_name: anvoio-core-monitor
+    container_name: anvoio-core-monitor-writer
     restart: unless-stopped
     env_file: .env
+    command: ["node", "dist/writer.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  reader:
+    build: .
+    container_name: anvoio-core-monitor-reader
+    restart: unless-stopped
+    env_file: .env
+    command: ["node", "dist/reader.js"]
     ports:
       - "${MONITOR_PORT:-3100}:3000"
     depends_on:
       postgres:
         condition: service_healthy
-
