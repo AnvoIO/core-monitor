@@ -216,8 +216,21 @@ export class ChainMonitor extends EventEmitter {
     // represents a PROPOSED schedule, not yet active. Store it as pending.
     if (block.new_producers && block.new_producers.version > this.schedule.version) {
       this.pendingSchedule = block.new_producers;
+      const pendingProducers = block.new_producers.producers.map((p) => p.producer_name);
+      const currentProducers = this.schedule.producers;
+      const added = pendingProducers.filter((p: string) => !currentProducers.includes(p));
+      const removed = currentProducers.filter(p => !pendingProducers.includes(p));
+
+      await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', JSON.stringify({
+        version: block.new_producers.version,
+        producers: pendingProducers,
+        added,
+        removed,
+        blockNum,
+      }));
+
       this.log.info(
-        { version: block.new_producers.version, blockNum },
+        { version: block.new_producers.version, blockNum, added, removed },
         'Pending schedule detected (not yet active)'
       );
     }
@@ -244,6 +257,7 @@ export class ChainMonitor extends EventEmitter {
         });
       }
       this.pendingSchedule = null;
+      await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', '');
     }
 
     // Producer registration events

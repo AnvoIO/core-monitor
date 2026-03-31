@@ -319,6 +319,7 @@
       const firstRound = status?.firstCompleteRound;
       const activation = status?.scheduleActivation;
       const earliest = status?.earliestData;
+      const pending = status?.pendingSchedule;
 
       const avgReliability = prods.length > 0
         ? (prods.reduce((s, p) => s + parseFloat(p.reliability_pct || 0), 0) / prods.length).toFixed(2)
@@ -333,8 +334,8 @@
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-card">
           <div class="label">Schedule</div>
-          <div class="value mono">${scheduleVersion}</div>
-          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}</div>
+          <div class="value mono">${scheduleVersion}${pending ? ' <span style="font-size:12px;color:var(--orange)">→ ' + pending.version + ' proposed</span>' : ''}</div>
+          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}${pending ? '<br>+' + esc((pending.added||[]).join(', ')) + (pending.removed?.length ? ' / -' + esc((pending.removed||[]).join(', ')) : '') : ''}</div>
         </div>
         <div class="stat-card">
           <div class="label">Current Round</div>
