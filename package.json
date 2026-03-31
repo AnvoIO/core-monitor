@@ -1,6 +1,6 @@
 {
   "name": "@anvoio/core-monitor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Block Producer monitoring for Anvo Core and Legacy Antelope/EOSIO chains",
   "main": "dist/index.js",
   "scripts": {
