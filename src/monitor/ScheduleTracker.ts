@@ -118,17 +118,20 @@ export class ScheduleTracker {
       JSON.stringify(this.currentSchedule)
     );
 
-    await this.db.insertScheduleChange({
-      chain: this.chain,
-      network: this.network,
-      schedule_version: version,
-      producers_added: JSON.stringify(added),
-      producers_removed: JSON.stringify(removed),
-      producers_key_updates: JSON.stringify(keyUpdates),
-      producer_list: JSON.stringify(newProducers),
-      block_number: blockNum,
-      timestamp,
-    });
+    // blockNum 0 = RPC bootstrap, not a real on-chain schedule change
+    if (blockNum > 0) {
+      await this.db.insertScheduleChange({
+        chain: this.chain,
+        network: this.network,
+        schedule_version: version,
+        producers_added: JSON.stringify(added),
+        producers_removed: JSON.stringify(removed),
+        producers_key_updates: JSON.stringify(keyUpdates),
+        producer_list: JSON.stringify(newProducers),
+        block_number: blockNum,
+        timestamp,
+      });
+    }
 
     return { added, removed, keyUpdates };
   }
