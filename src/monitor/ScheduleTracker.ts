@@ -6,6 +6,7 @@ const log = logger.child({ module: 'ScheduleTracker' });
 export interface ProducerSchedule {
   version: number;
   producers: string[];
+  producerKeys?: Record<string, string>;
 }
 
 export class ScheduleTracker {
@@ -49,21 +50,39 @@ export class ScheduleTracker {
     return this.currentSchedule?.producers ?? [];
   }
 
+  get producerKeys(): Record<string, string> {
+    return this.currentSchedule?.producerKeys ?? {};
+  }
+
   async updateSchedule(
     version: number,
     producers: Array<{ producer_name: string; block_signing_key: string }>,
     blockNum: number,
     timestamp: string
-  ): Promise<boolean> {
+  ): Promise<false | { added: string[]; removed: string[]; keyUpdates: string[] }> {
     if (this.currentSchedule && version <= this.currentSchedule.version) {
       return false;
     }
 
     const newProducers = producers.map((p) => p.producer_name);
     const oldProducers = this.currentSchedule?.producers ?? [];
+    const oldKeys = this.currentSchedule?.producerKeys ?? {};
 
     const added = newProducers.filter((p) => !oldProducers.includes(p));
     const removed = oldProducers.filter((p) => !newProducers.includes(p));
+
+    // Detect key-only changes: same producer name, different signing key
+    const newKeys: Record<string, string> = {};
+    for (const p of producers) {
+      newKeys[p.producer_name] = p.block_signing_key;
+    }
+
+    const keyUpdates: string[] = [];
+    for (const p of newProducers) {
+      if (oldKeys[p] && newKeys[p] && oldKeys[p] !== newKeys[p] && !added.includes(p)) {
+        keyUpdates.push(p);
+      }
+    }
 
     log.info(
       {
@@ -74,11 +93,12 @@ export class ScheduleTracker {
         producerCount: newProducers.length,
         added: added.length > 0 ? added : undefined,
         removed: removed.length > 0 ? removed : undefined,
+        keyUpdates: keyUpdates.length > 0 ? keyUpdates : undefined,
       },
       'Schedule change detected'
     );
 
-    this.currentSchedule = { version, producers: newProducers };
+    this.currentSchedule = { version, producers: newProducers, producerKeys: newKeys };
 
     await this.db.setState(
       this.chain,
@@ -93,12 +113,13 @@ export class ScheduleTracker {
       schedule_version: version,
       producers_added: JSON.stringify(added),
       producers_removed: JSON.stringify(removed),
+      producers_key_updates: JSON.stringify(keyUpdates),
       producer_list: JSON.stringify(newProducers),
       block_number: blockNum,
       timestamp,
     });
 
-    return true;
+    return { added, removed, keyUpdates };
   }
 
   getProducerPosition(producer: string): number {

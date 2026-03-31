@@ -129,15 +129,40 @@ export class AlertManager {
     network: string;
     version: number;
     producers: string[];
+    added?: string[];
+    removed?: string[];
+    keyUpdates?: string[];
     blockNum: number;
     timestamp: string;
   }): Promise<void> {
+    const added = params.added || [];
+    const removed = params.removed || [];
+    const keyUpdates = params.keyUpdates || [];
+
+    // Build a descriptive title based on what actually changed
+    let title: string;
+    if (added.length === 0 && removed.length === 0 && keyUpdates.length > 0) {
+      title = `Schedule v${params.version} — key update`;
+    } else {
+      title = `Schedule change to v${params.version}`;
+    }
+
+    // Build a descriptive body
+    const lines: string[] = [];
+    lines.push(`Schedule v${params.version} (${params.producers.length} producers) at block ${params.blockNum}`);
+    if (added.length > 0) lines.push(`Added: ${added.join(', ')}`);
+    if (removed.length > 0) lines.push(`Removed: ${removed.join(', ')}`);
+    if (keyUpdates.length > 0) lines.push(`Key update: ${keyUpdates.join(', ')}`);
+    if (added.length === 0 && removed.length === 0 && keyUpdates.length === 0) {
+      lines.push(`Producers: ${params.producers.join(', ')}`);
+    }
+
     await this.sendAlert({
       severity: 'info',
       chain: params.chain,
       network: params.network,
-      title: `Schedule change to v${params.version}`,
-      body: `New schedule (${params.producers.length} producers) at block ${params.blockNum}\nProducers: ${params.producers.join(', ')}`,
+      title,
+      body: lines.join('\n'),
       timestamp: params.timestamp,
     });
   }

@@ -266,7 +266,16 @@ export class Database {
         `);
       }
 
-      log.info({ version: 4 }, 'Database schema up to date');
+      if (currentVersion < 5) {
+        log.info('Running migration v5: add producers_key_updates column to schedule_changes');
+
+        await client.query(`
+          ALTER TABLE schedule_changes ADD COLUMN IF NOT EXISTS producers_key_updates TEXT;
+          INSERT INTO schema_version (version) VALUES (5);
+        `);
+      }
+
+      log.info({ version: 5 }, 'Database schema up to date');
     } finally {
       client.release();
     }
@@ -369,19 +378,20 @@ export class Database {
     schedule_version: number;
     producers_added: string;
     producers_removed: string;
+    producers_key_updates: string;
     producer_list: string;
     block_number: number;
     timestamp: string;
   }): Promise<void> {
     await this.pool.query(
       `INSERT INTO schedule_changes (chain, network, schedule_version,
-        producers_added, producers_removed, producer_list,
+        producers_added, producers_removed, producers_key_updates, producer_list,
         block_number, timestamp)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (chain, network, schedule_version) DO NOTHING`,
       [params.chain, params.network, params.schedule_version,
-       params.producers_added, params.producers_removed, params.producer_list,
-       params.block_number, params.timestamp]
+       params.producers_added, params.producers_removed, params.producers_key_updates,
+       params.producer_list, params.block_number, params.timestamp]
     );
   }
 

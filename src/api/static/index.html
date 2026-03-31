@@ -335,7 +335,13 @@
         <div class="stat-card">
           <div class="label">Schedule</div>
           <div class="value mono">${esc(String(scheduleVersion))}${pending ? ' <span style="font-size:12px;color:var(--orange)">→ ' + esc(String(pending.version)) + ' proposed</span>' : ''}</div>
-          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}${pending ? '<br>+' + esc((pending.added||[]).join(', ')) + (pending.removed?.length ? ' / -' + esc((pending.removed||[]).join(', ')) : '') : ''}</div>
+          <div class="sub">${activation ? formatDate(activation.timestamp) + ' / block ' + (activation.blockNumber || 0).toLocaleString() : 'unknown activation'}${pending ? '<br>' + (() => {
+            const parts = [];
+            if (pending.added?.length) parts.push('+' + esc(pending.added.join(', ')));
+            if (pending.removed?.length) parts.push('-' + esc(pending.removed.join(', ')));
+            if (pending.keyUpdates?.length) parts.push('key update: ' + esc(pending.keyUpdates.join(', ')));
+            return parts.join(' / ') || 'no producer changes';
+          })() : ''}</div>
         </div>
         <div class="stat-card">
           <div class="label">Current Round</div>
@@ -526,7 +532,18 @@
       const all = [
         ...missed.map(e => ({ severity: 'red', text: `${esc(e.producer)} missed ${e.blocks_missed} blocks`, time: e.timestamp })),
         ...forks.map(e => ({ severity: 'yellow', text: `Fork: ${esc(e.original_producer)} replaced by ${esc(e.replacement_producer)} at block ${e.block_number}`, time: e.timestamp })),
-        ...schedules.map(e => { try { return { severity: 'blue', text: `Schedule ${esc(String(e.schedule_version))} (${JSON.parse(e.producer_list).length} producers)`, time: e.timestamp }; } catch { return { severity: 'blue', text: `Schedule ${esc(String(e.schedule_version))}`, time: e.timestamp }; } }),
+        ...schedules.map(e => { try {
+          const count = JSON.parse(e.producer_list).length;
+          const added = e.producers_added ? JSON.parse(e.producers_added) : [];
+          const removed = e.producers_removed ? JSON.parse(e.producers_removed) : [];
+          const keyUpd = e.producers_key_updates ? JSON.parse(e.producers_key_updates) : [];
+          const parts = [];
+          if (added.length) parts.push('+' + esc(added.join(', ')));
+          if (removed.length) parts.push('-' + esc(removed.join(', ')));
+          if (keyUpd.length) parts.push('key update: ' + esc(keyUpd.join(', ')));
+          const detail = parts.length ? ' — ' + parts.join(' / ') : '';
+          return { severity: 'blue', text: `Schedule ${esc(String(e.schedule_version))} (${count} producers)${detail}`, time: e.timestamp };
+        } catch { return { severity: 'blue', text: `Schedule ${esc(String(e.schedule_version))}`, time: e.timestamp }; } }),
         ...producerEvents.map(e => {
           const label = e.action === 'regproducer' ? 'registered' : e.action === 'kickbp' ? 'kicked' : 'unregistered';
           const sev = e.action === 'regproducer' ? 'green' : e.action === 'kickbp' ? 'orange' : 'purple';

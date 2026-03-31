@@ -224,19 +224,30 @@ export class ChainMonitor extends EventEmitter {
       this.pendingSchedule = block.new_producers;
       const pendingProducers = block.new_producers.producers.map((p) => p.producer_name);
       const currentProducers = this.schedule.producers;
+      const currentKeys = this.schedule.producerKeys;
       const added = pendingProducers.filter((p: string) => !currentProducers.includes(p));
       const removed = currentProducers.filter(p => !pendingProducers.includes(p));
+
+      // Detect key-only changes: same producer, different signing key
+      const keyUpdates: string[] = [];
+      for (const p of block.new_producers.producers) {
+        const oldKey = currentKeys[p.producer_name];
+        if (oldKey && oldKey !== p.block_signing_key && !added.includes(p.producer_name)) {
+          keyUpdates.push(p.producer_name);
+        }
+      }
 
       await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', JSON.stringify({
         version: block.new_producers.version,
         producers: pendingProducers,
         added,
         removed,
+        keyUpdates,
         blockNum,
       }));
 
       this.log.info(
-        { version: block.new_producers.version, blockNum, added, removed },
+        { version: block.new_producers.version, blockNum, added, removed, keyUpdates: keyUpdates.length > 0 ? keyUpdates : undefined },
         'Pending schedule detected (not yet active)'
       );
     }
@@ -244,13 +255,13 @@ export class ChainMonitor extends EventEmitter {
     // The schedule_version in the block header tells us which schedule is
     // actually ACTIVE. When it increments, apply the pending schedule.
     if (block.schedule_version > this.schedule.version && this.pendingSchedule) {
-      const changed = await this.schedule.updateSchedule(
+      const result = await this.schedule.updateSchedule(
         this.pendingSchedule.version,
         this.pendingSchedule.producers,
         blockNum,
         block.timestamp
       );
-      if (changed) {
+      if (result) {
         await this.roundEvaluator.setScheduleActivation(block.timestamp);
 
         this.emit('schedule_change', {
@@ -258,6 +269,9 @@ export class ChainMonitor extends EventEmitter {
           network: this.config.network,
           version: this.pendingSchedule.version,
           producers: this.pendingSchedule.producers.map((p) => p.producer_name),
+          added: result.added,
+          removed: result.removed,
+          keyUpdates: result.keyUpdates,
           blockNum,
           timestamp: block.timestamp,
         });
