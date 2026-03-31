@@ -48,6 +48,7 @@ export class RoundEvaluator {
   private config: ChainConfig;
   private db: Database;
   private schedule: ScheduleTracker;
+  private statePrefix: string;
   private currentGlobalRound: number = -1;
   private scheduleActivationGlobalRound: number = 0;
   private lastBlockNum: number = 0;
@@ -57,23 +58,24 @@ export class RoundEvaluator {
   private roundStartTimestamp: string = '';
   private roundEndTimestamp: string = '';
 
-  constructor(config: ChainConfig, db: Database, schedule: ScheduleTracker) {
+  constructor(config: ChainConfig, db: Database, schedule: ScheduleTracker, statePrefix: string = '') {
     this.config = config;
     this.db = db;
     this.schedule = schedule;
+    this.statePrefix = statePrefix;
   }
 
   async init(): Promise<void> {
-    const savedBlock = await this.db.getState(this.config.chain, this.config.network, 'last_block');
+    const savedBlock = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}last_block`);
     this.lastBlockNum = savedBlock ? parseInt(savedBlock, 10) : 0;
 
-    const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, 'current_global_round');
+    const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}current_global_round`);
     this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
     // Always discard the first round after startup — we never know if we
     // observed it from the beginning, whether fresh start or resume
     this.firstRoundIsPartial = true;
 
-    const savedActivation = await this.db.getState(this.config.chain, this.config.network, 'schedule_activation_global_round');
+    const savedActivation = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}schedule_activation_global_round`);
     this.scheduleActivationGlobalRound = savedActivation ? parseInt(savedActivation, 10) : 0;
 
     log.info(
@@ -111,7 +113,7 @@ export class RoundEvaluator {
 
     await this.db.setState(
       this.config.chain, this.config.network,
-      'schedule_activation_global_round',
+      `${this.statePrefix}schedule_activation_global_round`,
       String(this.scheduleActivationGlobalRound)
     );
     log.info(
@@ -159,12 +161,12 @@ export class RoundEvaluator {
       this.roundStartTimestamp = timestamp;
       this.roundEndTimestamp = '';
 
-      await this.db.setState(this.config.chain, this.config.network, 'current_global_round', String(this.currentGlobalRound));
+      await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}current_global_round`, String(this.currentGlobalRound));
 
       this.addBlock(producer, block_num);
       this.roundEndTimestamp = timestamp;
       this.lastBlockNum = block_num;
-      await this.db.setState(this.config.chain, this.config.network, 'last_block', String(block_num));
+      await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}last_block`, String(block_num));
 
       return result;
     }
@@ -172,7 +174,7 @@ export class RoundEvaluator {
     this.addBlock(producer, block_num);
     this.roundEndTimestamp = timestamp;
     this.lastBlockNum = block_num;
-    await this.db.setState(this.config.chain, this.config.network, 'last_block', String(block_num));
+    await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}last_block`, String(block_num));
 
     return null;
   }
@@ -241,11 +243,11 @@ export class RoundEvaluator {
 
     await this.persistRound(roundResult);
 
-    const firstRound = await this.db.getState(this.config.chain, this.config.network, 'first_complete_round');
+    const firstRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}first_complete_round`);
     if (!firstRound) {
       await this.db.setState(
         this.config.chain, this.config.network,
-        'first_complete_round',
+        `${this.statePrefix}first_complete_round`,
         String(displayRound)
       );
     }

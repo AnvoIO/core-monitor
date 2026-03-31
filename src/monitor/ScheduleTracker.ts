@@ -12,16 +12,18 @@ export class ScheduleTracker {
   private chain: string;
   private network: string;
   private db: Database;
+  private statePrefix: string;
   private currentSchedule: ProducerSchedule | null = null;
 
-  constructor(chain: string, network: string, db: Database) {
+  constructor(chain: string, network: string, db: Database, statePrefix: string = '') {
     this.chain = chain;
     this.network = network;
     this.db = db;
+    this.statePrefix = statePrefix;
   }
 
   async init(): Promise<void> {
-    const saved = await this.db.getState(this.chain, this.network, 'schedule');
+    const saved = await this.db.getState(this.chain, this.network, `${this.statePrefix}schedule`);
     if (saved) {
       try {
         this.currentSchedule = JSON.parse(saved);
@@ -81,7 +83,7 @@ export class ScheduleTracker {
     await this.db.setState(
       this.chain,
       this.network,
-      'schedule',
+      `${this.statePrefix}schedule`,
       JSON.stringify(this.currentSchedule)
     );
 

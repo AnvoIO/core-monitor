@@ -211,7 +211,62 @@ export class Database {
         `);
       }
 
-      log.info({ version: 3 }, 'Database schema up to date');
+      if (currentVersion < 4) {
+        log.info('Running migration v4: deduplication constraints for catchup writer');
+
+        // Remove duplicate rows before adding unique constraints.
+        // Keep the row with the lowest id (earliest insert).
+        // Also clean orphaned round_producers and missed_block_events.
+        await client.query(`
+          DELETE FROM round_producers WHERE round_id IN (
+            SELECT a.id FROM rounds a JOIN rounds b
+            ON a.chain = b.chain AND a.network = b.network
+              AND a.round_number = b.round_number AND a.schedule_version = b.schedule_version
+              AND a.id > b.id
+          );
+
+          DELETE FROM missed_block_events WHERE round_id IN (
+            SELECT a.id FROM rounds a JOIN rounds b
+            ON a.chain = b.chain AND a.network = b.network
+              AND a.round_number = b.round_number AND a.schedule_version = b.schedule_version
+              AND a.id > b.id
+          );
+
+          DELETE FROM rounds a USING rounds b
+          WHERE a.id > b.id
+            AND a.chain = b.chain AND a.network = b.network
+            AND a.round_number = b.round_number AND a.schedule_version = b.schedule_version;
+
+          DELETE FROM schedule_changes a USING schedule_changes b
+          WHERE a.id > b.id
+            AND a.chain = b.chain AND a.network = b.network
+            AND a.schedule_version = b.schedule_version;
+
+          DELETE FROM producer_events a USING producer_events b
+          WHERE a.id > b.id
+            AND a.chain = b.chain AND a.network = b.network
+            AND a.producer = b.producer AND a.action = b.action
+            AND a.block_number = b.block_number;
+        `);
+
+        // Clean stale catchup state from previous broken runs
+        await client.query(`
+          DELETE FROM monitor_state WHERE key LIKE 'catchup_%';
+        `);
+
+        await client.query(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_rounds_dedup
+            ON rounds(chain, network, round_number, schedule_version);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_schedule_changes_dedup
+            ON schedule_changes(chain, network, schedule_version);
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_producer_events_dedup
+            ON producer_events(chain, network, producer, action, block_number);
+
+          INSERT INTO schema_version (version) VALUES (4);
+        `);
+      }
+
+      log.info({ version: 4 }, 'Database schema up to date');
     } finally {
       client.release();
     }
@@ -235,16 +290,17 @@ export class Database {
         timestamp_start, timestamp_end, producers_scheduled,
         producers_produced, producers_missed)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (chain, network, round_number, schedule_version) DO NOTHING
       RETURNING id`,
       [params.chain, params.network, params.round_number, params.schedule_version,
        params.timestamp_start, params.timestamp_end, params.producers_scheduled,
        params.producers_produced, params.producers_missed]
     );
-    return result.rows[0].id;
+    return result.rows[0]?.id ?? null;
   }
 
   async insertRoundProducer(params: {
-    round_id: number;
+    round_id: number | null;
     producer: string;
     position: number;
     blocks_expected: number;
@@ -253,6 +309,7 @@ export class Database {
     first_block: number | null;
     last_block: number | null;
   }): Promise<void> {
+    if (params.round_id === null) return; // round was a duplicate, skip
     await this.pool.query(
       `INSERT INTO round_producers (round_id, producer, position,
         blocks_expected, blocks_produced, blocks_missed,
@@ -320,7 +377,8 @@ export class Database {
       `INSERT INTO schedule_changes (chain, network, schedule_version,
         producers_added, producers_removed, producer_list,
         block_number, timestamp)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (chain, network, schedule_version) DO NOTHING`,
       [params.chain, params.network, params.schedule_version,
        params.producers_added, params.producers_removed, params.producer_list,
        params.block_number, params.timestamp]
@@ -340,7 +398,8 @@ export class Database {
     await this.pool.query(
       `INSERT INTO producer_events (chain, network, producer, action,
         block_number, timestamp)
-      VALUES ($1, $2, $3, $4, $5, $6)`,
+      VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (chain, network, producer, action, block_number) DO NOTHING`,
       [params.chain, params.network, params.producer, params.action,
        params.block_number, params.timestamp]
     );

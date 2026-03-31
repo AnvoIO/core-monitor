@@ -94,33 +94,15 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
     endBlock: endBlock || 'until live writer start',
   }, 'Starting catchup');
 
-  const schedule = new ScheduleTracker(chainConfig.chain, chainConfig.network, db);
-  await schedule.init();
-  const evaluator = new RoundEvaluator(chainConfig, db, schedule);
+  const schedule = new ScheduleTracker(chainConfig.chain, chainConfig.network, db, 'catchup_');
+  // Do NOT call schedule.init() — the catchup writer starts from genesis
+  // with an empty schedule and must detect every schedule change from the
+  // block stream. The live writer's schedule state is in the shared DB
+  // and would poison our starting state.
+  const evaluator = new RoundEvaluator(chainConfig, db, schedule, 'catchup_');
   await evaluator.init();
 
-  // Bootstrap schedule from RPC
-  try {
-    const res = await fetch(`${chainConfig.apiUrl}/v1/chain/get_producer_schedule`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
-    });
-    if (res.ok) {
-      const data = await res.json() as any;
-      if (data.active?.producers) {
-        await schedule.updateSchedule(
-          data.active.version,
-          data.active.producers.map((p: any) => ({
-            producer_name: p.producer_name,
-            block_signing_key: p.block_signing_key || 'unknown',
-          })),
-          0, new Date().toISOString()
-        );
-        log.info({ version: data.active.version }, 'Schedule bootstrapped from RPC');
-      }
-    }
-  } catch (err) {
-    log.warn({ err }, 'Failed — will detect from block headers');
-  }
+  log.info({ chain: chainConfig.id }, 'Starting with empty schedule — will detect from block headers');
 
   const state: CatchupChain = {
     config: chainConfig,
@@ -201,19 +183,26 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
   }
 
   // Schedule change detection (same as live writer)
+  // Store proposed schedule from block headers
   if (block.new_producers && block.new_producers.version > state.schedule.version) {
     state.pendingSchedule = block.new_producers;
+    log.info({ chain: state.config.id, version: block.new_producers.version, blockNum },
+      'Pending schedule detected');
   }
 
-  const account = String(block.schedule_version);
+  // Apply when schedule_version in block header actually increments
   if (block.schedule_version > state.schedule.version && state.pendingSchedule) {
-    await state.schedule.updateSchedule(
+    const changed = await state.schedule.updateSchedule(
       state.pendingSchedule.version,
       state.pendingSchedule.producers,
       blockNum,
       block.timestamp
     );
-    await state.evaluator.setScheduleActivation(block.timestamp);
+    if (changed) {
+      await state.evaluator.setScheduleActivation(block.timestamp);
+      log.info({ chain: state.config.id, version: state.pendingSchedule.version, blockNum },
+        'Schedule activated');
+    }
     state.pendingSchedule = null;
   }
 
