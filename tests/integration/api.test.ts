@@ -115,9 +115,18 @@ describe('API Routes', () => {
       expect(res.json().rounds).toHaveLength(2);
     });
 
-    it('should return empty for unknown chain', async () => {
+    it('should return 404 for unknown chain', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/unknown/mainnet/rounds' });
-      expect(res.json().rounds).toHaveLength(0);
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('should include round counts', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/libre/mainnet/rounds' });
+      const body = res.json();
+      expect(body.counts).toBeDefined();
+      expect(body.counts.total).toBeGreaterThanOrEqual(0);
+      expect(body.counts.perfect).toBeDefined();
+      expect(body.counts.issues).toBeDefined();
     });
   });
 

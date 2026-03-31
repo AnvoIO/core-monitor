@@ -36,7 +36,7 @@ describe('Security Fixes', () => {
     await db.close();
   });
 
-  describe('H1: CORS origin from config', () => {
+  describe('CORS', () => {
     it('should use configured CORS origin', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/health' });
       expect(res.headers['access-control-allow-origin']).toBe('https://monitor.cryptobloks.io');
@@ -48,7 +48,24 @@ describe('Security Fixes', () => {
     });
   });
 
-  describe('M4: Health endpoint no uptime', () => {
+  describe('Security headers', () => {
+    it('should set X-Frame-Options', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/health' });
+      expect(res.headers['x-frame-options']).toBe('DENY');
+    });
+
+    it('should set X-Content-Type-Options', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/health' });
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+    });
+
+    it('should set Referrer-Policy', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/health' });
+      expect(res.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
+    });
+  });
+
+  describe('Health endpoint', () => {
     it('should not return uptime', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/health' });
       const body = res.json();
@@ -58,16 +75,34 @@ describe('Security Fixes', () => {
     });
   });
 
-  describe('L6: 404 for unknown producer', () => {
-    it('should return 404 for nonexistent producer', async () => {
-      const res = await app.inject({ method: 'GET', url: '/api/v1/libre/mainnet/producers/nonexistent' });
+  describe('Chain/network validation', () => {
+    it('should return 404 for unknown chain', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/unknown/mainnet/rounds' });
       expect(res.statusCode).toBe(404);
-      const body = res.json();
-      expect(body.error).toBe('Not found');
+      expect(res.json().error).toBe('Unknown chain/network');
+    });
+
+    it('should return 404 for unknown network', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/libre/fakenet/rounds' });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe('Unknown chain/network');
+    });
+
+    it('should accept configured chain/network', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/libre/mainnet/rounds' });
+      expect(res.statusCode).toBe(200);
     });
   });
 
-  describe('M5: Input validation', () => {
+  describe('Producer 404', () => {
+    it('should return 404 for nonexistent producer', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/libre/mainnet/producers/nonexistent' });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toBe('Not found');
+    });
+  });
+
+  describe('Input validation', () => {
     it('should handle invalid limit gracefully', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/libre/mainnet/rounds?limit=abc' });
       expect(res.statusCode).toBe(200);
@@ -83,10 +118,9 @@ describe('Security Fixes', () => {
       expect(res.statusCode).toBe(200);
     });
 
-    it('should reject invalid date format for since', async () => {
+    it('should ignore invalid date format for since', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/libre/mainnet/events?since=notadate' });
       expect(res.statusCode).toBe(200);
-      // Invalid date is ignored, not an error
     });
 
     it('should accept valid ISO date for since', async () => {
@@ -96,11 +130,21 @@ describe('Security Fixes', () => {
   });
 
   describe('Error handler', () => {
-    it('should not leak stack traces on 404', async () => {
+    it('should not leak stack traces', async () => {
       const res = await app.inject({ method: 'GET', url: '/api/v1/nonexistent/route' });
       expect(res.statusCode).toBe(404);
       const body = res.json();
       expect(body.stack).toBeUndefined();
+    });
+  });
+
+  describe('Chains API', () => {
+    it('should not expose sensitive config', async () => {
+      const res = await app.inject({ method: 'GET', url: '/api/v1/chains' });
+      const body = res.json();
+      expect(body.chains[0].shipUrl).toBeUndefined();
+      expect(body.chains[0].apiUrl).toBeUndefined();
+      expect(body.chains[0].hyperionUrl).toBeUndefined();
     });
   });
 });
