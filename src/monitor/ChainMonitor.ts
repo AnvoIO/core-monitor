@@ -188,6 +188,9 @@ export class ChainMonitor extends EventEmitter {
           'Schedule version mismatch on startup — re-bootstrapping from RPC'
         );
         await this.fetchSchedule();
+        // Clear stale pending schedule that may reference the now-active version
+        this.pendingSchedule = null;
+        await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', '');
       }
     }
 
