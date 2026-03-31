@@ -193,7 +193,25 @@ export class Database {
         `);
       }
 
-      log.info({ version: 2 }, 'Database schema up to date');
+      if (currentVersion < 3) {
+        log.info('Running migration v3: performance indexes');
+        await client.query(`
+          CREATE INDEX IF NOT EXISTS idx_rounds_chain_ts
+            ON rounds(chain, network, timestamp_start DESC);
+          CREATE INDEX IF NOT EXISTS idx_rounds_chain_id
+            ON rounds(chain, network, id DESC);
+          CREATE INDEX IF NOT EXISTS idx_rp_roundid_stats
+            ON round_producers(round_id) INCLUDE (producer, blocks_produced, blocks_expected, blocks_missed);
+          CREATE INDEX IF NOT EXISTS idx_rp_round_producer
+            ON round_producers(round_id, producer, blocks_produced);
+          CREATE INDEX IF NOT EXISTS idx_missed_chain_ts
+            ON missed_block_events(chain, network, timestamp DESC);
+
+          INSERT INTO schema_version (version) VALUES (3);
+        `);
+      }
+
+      log.info({ version: 3 }, 'Database schema up to date');
     } finally {
       client.release();
     }
