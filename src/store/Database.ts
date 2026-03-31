@@ -370,7 +370,7 @@ export class Database {
     let sql = 'SELECT * FROM rounds WHERE chain = $1 AND network = $2';
     let idx = 3;
     if (since) { sql += ` AND timestamp_start >= $${idx++}`; params.push(since); }
-    sql += ` ORDER BY round_number DESC LIMIT $${idx++} OFFSET $${idx++}`;
+    sql += ` ORDER BY id DESC LIMIT $${idx++} OFFSET $${idx++}`;
     params.push(limit, offset);
     const result = await this.pool.query(sql, params);
     return result.rows;
