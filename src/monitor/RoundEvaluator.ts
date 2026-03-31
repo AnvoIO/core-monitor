@@ -101,6 +101,14 @@ export class RoundEvaluator {
     this.scheduleActivationGlobalRound = slotToGlobalRound(
       slot, this.config.scheduleSize, this.config.blocksPerBp
     );
+
+    // Discard the current in-progress round — it spans the schedule transition
+    // and would be evaluated against the new producer list with incomplete data
+    this.roundBlocks.clear();
+    this.roundStartTimestamp = '';
+    this.roundEndTimestamp = '';
+    this.firstRoundIsPartial = true;
+
     await this.db.setState(
       this.config.chain, this.config.network,
       'schedule_activation_global_round',
