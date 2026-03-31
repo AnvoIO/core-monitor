@@ -37,7 +37,8 @@ export class TelegramAlert implements AlertChannel {
     }
 
     const emoji = SEVERITY_EMOJI[message.severity] || '';
-    const text = `${emoji} <b>${message.title}</b>\n${message.body}`;
+    const indentedBody = message.body.split('\n').map(line => ` ${line}`).join('\n');
+    const text = `${emoji} <b>${message.title}</b>\n${indentedBody}`;
 
     // Always send to status channel
     await this.sendToChat(ids.statusChatId, text);
