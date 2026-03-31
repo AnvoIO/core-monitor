@@ -272,6 +272,8 @@ export class ChainMonitor extends EventEmitter {
               || String(actionTrace.act.data?.producer || '');
           }
 
+          if (!producerName || producerName === 'eosio') continue;
+
           await this.db.insertProducerEvent({
             chain: this.config.chain,
             network: this.config.network,
@@ -290,6 +292,28 @@ export class ChainMonitor extends EventEmitter {
             blockNum,
             timestamp: block.timestamp,
           });
+
+          // kickbp implies unregprod — log both events
+          if (name === 'kickbp') {
+            await this.db.insertProducerEvent({
+              chain: this.config.chain,
+              network: this.config.network,
+              producer: producerName,
+              action: 'unregprod',
+              block_number: blockNum,
+              timestamp: block.timestamp,
+            });
+
+            this.emit('producer_action', {
+              chain: this.config.chain,
+              network: this.config.network,
+              action: 'unregprod',
+              producer: producerName,
+              data: actionTrace.act.data,
+              blockNum,
+              timestamp: block.timestamp,
+            });
+          }
         }
       }
     }
