@@ -324,8 +324,10 @@
         ? (prods.reduce((s, p) => s + parseFloat(p.reliability_pct || 0), 0) / prods.length).toFixed(2)
         : '—';
 
-      const perfectRounds = rds.filter(r => r.producers_missed === 0).length;
-      const issueRounds = rds.filter(r => r.producers_missed > 0).length;
+      const counts = rounds.counts || { total: rds.length, perfect: 0, issues: 0 };
+      const perfectRounds = counts.perfect;
+      const issueRounds = counts.issues;
+      const totalRounds = counts.total;
       const tf = document.getElementById('timeframe').selectedOptions[0].text.toLowerCase();
 
       document.getElementById('statsGrid').innerHTML = `
@@ -347,12 +349,12 @@
         <div class="stat-card">
           <div class="label">Perfect Rounds</div>
           <div class="value" style="color: var(--green)">${perfectRounds}</div>
-          <div class="sub">of ${rds.length} in ${tf}</div>
+          <div class="sub">of ${totalRounds.toLocaleString()} in ${tf}</div>
         </div>
         <div class="stat-card">
           <div class="label">Rounds with Issues</div>
           <div class="value" style="color: ${issueRounds > 0 ? 'var(--yellow)' : 'var(--green)'}">${issueRounds}</div>
-          <div class="sub">of ${rds.length} in ${tf}</div>
+          <div class="sub">of ${totalRounds.toLocaleString()} in ${tf}</div>
         </div>
       `;
     }

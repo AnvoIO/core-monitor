@@ -392,6 +392,23 @@ export class Database {
     return map;
   }
 
+  async getRoundCounts(chain: string, network: string, since: string | null = null): Promise<{ total: number; perfect: number; issues: number }> {
+    const params: any[] = [chain, network];
+    let sql = `SELECT
+      COUNT(*) as total,
+      SUM(CASE WHEN producers_missed = 0 THEN 1 ELSE 0 END) as perfect,
+      SUM(CASE WHEN producers_missed > 0 THEN 1 ELSE 0 END) as issues
+    FROM rounds WHERE chain = $1 AND network = $2`;
+    if (since) { sql += ` AND timestamp_start >= $3`; params.push(since); }
+    const result = await this.pool.query(sql, params);
+    const row = result.rows[0];
+    return {
+      total: parseInt(row.total) || 0,
+      perfect: parseInt(row.perfect) || 0,
+      issues: parseInt(row.issues) || 0,
+    };
+  }
+
   async getEarliestRounds(chain: string, network: string, limit: number = 1): Promise<any[]> {
     const result = await this.pool.query(
       `SELECT * FROM rounds WHERE chain = $1 AND network = $2
