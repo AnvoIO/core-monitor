@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { Name, Serializer } from '@wharfkit/antelope';
+import { Name, PublicKey, Serializer } from '@wharfkit/antelope';
 import { ShipClient } from '../ship/ShipClient.js';
 import { ScheduleTracker } from './ScheduleTracker.js';
 import { RoundEvaluator, type RoundResult, type BlockRecord } from './RoundEvaluator.js';
@@ -229,11 +229,18 @@ export class ChainMonitor extends EventEmitter {
       const removed = currentProducers.filter(p => !pendingProducers.includes(p));
 
       // Detect key-only changes: same producer, different signing key
+      // Normalize to legacy format so RPC (EOS...) and SHiP (PUB_K1_...) keys compare equal
       const keyUpdates: string[] = [];
       for (const p of block.new_producers.producers) {
         const oldKey = currentKeys[p.producer_name];
-        if (oldKey && oldKey !== p.block_signing_key && !added.includes(p.producer_name)) {
-          keyUpdates.push(p.producer_name);
+        if (oldKey && !added.includes(p.producer_name)) {
+          let newKey: string;
+          try { newKey = PublicKey.from(p.block_signing_key).toLegacyString(); } catch { newKey = p.block_signing_key; }
+          let normOld: string;
+          try { normOld = PublicKey.from(oldKey).toLegacyString(); } catch { normOld = oldKey; }
+          if (normOld !== newKey) {
+            keyUpdates.push(p.producer_name);
+          }
         }
       }
 

@@ -1,7 +1,17 @@
+import { PublicKey } from '@wharfkit/antelope';
 import { logger } from '../utils/logger.js';
 import { Database } from '../store/Database.js';
 
 const log = logger.child({ module: 'ScheduleTracker' });
+
+/** Normalize a public key to legacy EOS... format for consistent comparison */
+function normalizeKey(key: string): string {
+  try {
+    return PublicKey.from(key).toLegacyString();
+  } catch {
+    return key;
+  }
+}
 
 export interface ProducerSchedule {
   version: number;
@@ -72,9 +82,10 @@ export class ScheduleTracker {
     const removed = oldProducers.filter((p) => !newProducers.includes(p));
 
     // Detect key-only changes: same producer name, different signing key
+    // Normalize to legacy EOS... format so RPC and SHiP keys compare equal
     const newKeys: Record<string, string> = {};
     for (const p of producers) {
-      newKeys[p.producer_name] = p.block_signing_key;
+      newKeys[p.producer_name] = normalizeKey(p.block_signing_key);
     }
 
     const keyUpdates: string[] = [];
