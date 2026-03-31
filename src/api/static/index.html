@@ -292,7 +292,7 @@
       const roundOffset = roundPage * roundLimit;
 
       const [producers, rounds, events, status] = await Promise.all([
-        fetchJSON(`/api/v1/${chain}/${network}/producers?days=${days}`),
+        fetchJSON(`/api/v1/${chain}/${network}/producers${since ? '?since=' + since : '?days=' + days}`),
         fetchJSON(`/api/v1/${chain}/${network}/rounds?limit=${roundLimit}&offset=${roundOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/events?limit=${eventLimit}&offset=${eventOffset}${since ? '&since=' + since : ''}`),
         fetchJSON(`/api/v1/${chain}/${network}/status`).catch(() => null),

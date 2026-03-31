@@ -450,7 +450,16 @@ export class Database {
     return result.rows[0];
   }
 
-  async getAllProducerStats(chain: string, network: string, days: number = 30): Promise<any[]> {
+  async getAllProducerStats(chain: string, network: string, days: number | null = 30, since: string | null = null): Promise<any[]> {
+    const params: any[] = [chain, network];
+    let timeFilter: string;
+    if (since) {
+      timeFilter = `AND r.created_at >= $3`;
+      params.push(since);
+    } else {
+      timeFilter = `AND r.created_at >= NOW() - ($3 || ' days')::INTERVAL`;
+      params.push(days || 30);
+    }
     const result = await this.pool.query(
       `SELECT
         producer,
@@ -467,23 +476,32 @@ export class Database {
       FROM round_producers rp
       JOIN rounds r ON rp.round_id = r.id
       WHERE r.chain = $1 AND r.network = $2
-        AND r.created_at >= NOW() - ($3 || ' days')::INTERVAL
+        ${timeFilter}
       GROUP BY producer
       ORDER BY reliability_pct DESC, producer ASC`,
-      [chain, network, days]
+      params
     );
     return result.rows;
   }
 
-  async getLongestOutages(chain: string, network: string, days: number = 30): Promise<Map<string, number>> {
+  async getLongestOutages(chain: string, network: string, days: number | null = 30, since: string | null = null): Promise<Map<string, number>> {
+    const params: any[] = [chain, network];
+    let timeFilter: string;
+    if (since) {
+      timeFilter = `AND r.created_at >= $3`;
+      params.push(since);
+    } else {
+      timeFilter = `AND r.created_at >= NOW() - ($3 || ' days')::INTERVAL`;
+      params.push(days || 30);
+    }
     const result = await this.pool.query(
       `SELECT rp.producer, rp.blocks_produced, r.round_number
       FROM round_producers rp
       JOIN rounds r ON rp.round_id = r.id
       WHERE r.chain = $1 AND r.network = $2
-        AND r.created_at >= NOW() - ($3 || ' days')::INTERVAL
+        ${timeFilter}
       ORDER BY rp.producer, r.round_number ASC`,
-      [chain, network, days]
+      params
     );
 
     const outages = new Map<string, number>();
