@@ -71,7 +71,7 @@ export class AlertManager {
     await Promise.all(sends);
   }
 
-  // -- Per-producer alerts (individual notifications) --
+  // -- Per-producer alerts (alert channel only) --
 
   async missedRound(params: {
     chain: string;
@@ -85,7 +85,7 @@ export class AlertManager {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
       severity: 'alert',
-      routing: 'both',
+      routing: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Missed Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -108,7 +108,7 @@ export class AlertManager {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
       severity: 'alert',
-      routing: 'both',
+      routing: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Missed Blocks [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -315,7 +315,7 @@ export class AlertManager {
   }): Promise<void> {
     await this.sendAlert({
       severity: 'alert',
-      routing: 'both',
+      routing: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Forked Block [ block ${params.blockNumber} ]`,
