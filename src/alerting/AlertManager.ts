@@ -305,7 +305,7 @@ export class AlertManager {
     });
   }
 
-  async fork(params: {
+  async fork(_params: {
     chain: string;
     network: string;
     blockNumber: number;
@@ -313,14 +313,7 @@ export class AlertManager {
     replacementProducer: string;
     timestamp: string;
   }): Promise<void> {
-    await this.sendAlert({
-      severity: 'alert',
-      routing: 'alert',
-      chain: params.chain,
-      network: params.network,
-      title: `Forked Block [ block ${params.blockNumber} ]`,
-      body: `\u26A0\uFE0F Forked Block: ${params.originalProducer} block ${params.blockNumber} replaced by ${params.replacementProducer}`,
-      timestamp: params.timestamp,
-    });
+    // Individual fork alerts suppressed — forks are reported as line items
+    // in the degraded round recap on the status channel
   }
 }
