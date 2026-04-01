@@ -85,6 +85,7 @@ describe('TelegramAlert', () => {
 
     await tg.send({
       severity: 'alert',
+      routing: 'both',
       chain: 'libre',
       network: 'mainnet',
       title: 'Critical!',

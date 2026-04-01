@@ -85,6 +85,7 @@ export class AlertManager {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
       severity: 'alert',
+      routing: 'both',
       chain: params.chain,
       network: params.network,
       title: `Missed Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -107,6 +108,7 @@ export class AlertManager {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
       severity: 'alert',
+      routing: 'both',
       chain: params.chain,
       network: params.network,
       title: `Missed Blocks [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -156,6 +158,7 @@ export class AlertManager {
 
     await this.sendAlert({
       severity: 'alert',
+      routing: 'status',
       chain: params.chain,
       network: params.network,
       title: `Degraded Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -211,6 +214,7 @@ export class AlertManager {
 
       await this.sendAlert({
         severity: 'info',
+        routing: 'both',
         chain,
         network,
         title: `Status Update \u2014 Rounds ${roundSpan}`,
@@ -311,6 +315,7 @@ export class AlertManager {
   }): Promise<void> {
     await this.sendAlert({
       severity: 'alert',
+      routing: 'both',
       chain: params.chain,
       network: params.network,
       title: `Forked Block [ block ${params.blockNumber} ]`,
