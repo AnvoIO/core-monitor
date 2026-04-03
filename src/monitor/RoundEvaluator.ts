@@ -51,6 +51,13 @@ function slotToGlobalRound(slot: number, scheduleSize: number, blocksPerBp: numb
   return Math.floor(slot / (scheduleSize * blocksPerBp));
 }
 
+export interface RoundEvaluatorOptions {
+  /** Write last_block state every N blocks instead of every block. Default: 1. */
+  stateWriteInterval?: number;
+  /** Use batch inserts for round persistence. Default: false. */
+  batchInserts?: boolean;
+}
+
 export class RoundEvaluator {
   private config: ChainConfig;
   private db: Database;
@@ -60,25 +67,48 @@ export class RoundEvaluator {
   private scheduleActivationGlobalRound: number = 0;
   private lastBlockNum: number = 0;
   private firstRoundIsPartial: boolean = true;
+  private stateWriteInterval: number;
+  private batchInserts: boolean;
+  private blocksSinceLastStateWrite: number = 0;
 
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
   private roundForks: RoundFork[] = [];
   private roundStartTimestamp: string = '';
   private roundEndTimestamp: string = '';
 
-  constructor(config: ChainConfig, db: Database, schedule: ScheduleTracker, statePrefix: string = '') {
+  /** In-progress outage streaks per producer (live writer only). */
+  private outageStreaks: Map<string, {
+    count: number;
+    startRound: number;
+    startTimestamp: string;
+    endRound: number;
+    endTimestamp: string;
+    scheduleVersion: number;
+  }> = new Map();
+
+  constructor(config: ChainConfig, db: Database, schedule: ScheduleTracker, statePrefix: string = '', options: RoundEvaluatorOptions = {}) {
     this.config = config;
     this.db = db;
     this.schedule = schedule;
     this.statePrefix = statePrefix;
+    this.stateWriteInterval = options.stateWriteInterval ?? 1;
+    this.batchInserts = options.batchInserts ?? false;
   }
 
   async init(): Promise<void> {
     const savedBlock = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}last_block`);
     this.lastBlockNum = savedBlock ? parseInt(savedBlock, 10) : 0;
 
-    const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}current_global_round`);
-    this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
+    if (this.batchInserts) {
+      // Catchup mode: don't restore currentGlobalRound — let processBlock
+      // recompute it from the first block in the stream. Restoring a stale
+      // value would prevent round boundaries from triggering if the stream
+      // resumes from a different position.
+      this.currentGlobalRound = -1;
+    } else {
+      const savedGlobalRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}current_global_round`);
+      this.currentGlobalRound = savedGlobalRound ? parseInt(savedGlobalRound, 10) : -1;
+    }
     // Always discard the first round — in-memory roundBlocks is empty after
     // restart, so the first round boundary would evaluate an incomplete round.
     this.firstRoundIsPartial = true;
@@ -111,6 +141,9 @@ export class RoundEvaluator {
     this.scheduleActivationGlobalRound = slotToGlobalRound(
       slot, this.config.scheduleSize, this.config.blocksPerBp
     );
+
+    // Flush any open outage streaks — producers may no longer be in the new schedule
+    await this.flushOutageStreaks();
 
     // Discard the current in-progress round — it spans the schedule transition
     // and would be evaluated against the new producer list with incomplete data
@@ -177,7 +210,9 @@ export class RoundEvaluator {
       this.addBlock(producer, block_num);
       this.roundEndTimestamp = timestamp;
       this.lastBlockNum = block_num;
+      // Always flush last_block at round boundaries for consistency
       await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}last_block`, String(block_num));
+      this.blocksSinceLastStateWrite = 0;
 
       return result;
     }
@@ -185,7 +220,11 @@ export class RoundEvaluator {
     this.addBlock(producer, block_num);
     this.roundEndTimestamp = timestamp;
     this.lastBlockNum = block_num;
-    await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}last_block`, String(block_num));
+    this.blocksSinceLastStateWrite++;
+    if (this.blocksSinceLastStateWrite >= this.stateWriteInterval) {
+      await this.db.setState(this.config.chain, this.config.network, `${this.statePrefix}last_block`, String(block_num));
+      this.blocksSinceLastStateWrite = 0;
+    }
 
     return null;
   }
@@ -260,15 +299,6 @@ export class RoundEvaluator {
 
     await this.persistRound(roundResult);
 
-    const firstRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}first_complete_round`);
-    if (!firstRound) {
-      await this.db.setState(
-        this.config.chain, this.config.network,
-        `${this.statePrefix}first_complete_round`,
-        String(displayRound)
-      );
-    }
-
     log.info(
       {
         chain: this.config.chain,
@@ -288,6 +318,14 @@ export class RoundEvaluator {
   private async persistRound(result: RoundResult): Promise<void> {
     if (result.producerResults.length === 0) return;
 
+    if (this.batchInserts) {
+      await this.persistRoundBatch(result);
+    } else {
+      await this.persistRoundIndividual(result);
+    }
+  }
+
+  private async persistRoundIndividual(result: RoundResult): Promise<void> {
     const roundId = await this.db.insertRound({
       chain: this.config.chain,
       network: this.config.network,
@@ -299,6 +337,8 @@ export class RoundEvaluator {
       producers_produced: result.producersProduced,
       producers_missed: result.producersMissed,
     });
+
+    const day = result.timestampStart.substring(0, 10);
 
     for (const pr of result.producerResults) {
       await this.db.insertRoundProducer({
@@ -333,6 +373,157 @@ export class RoundEvaluator {
           timestamp: result.timestampEnd,
         });
       }
+
+      // Update daily summary
+      await this.db.upsertProducerStatsDaily({
+        chain: this.config.chain,
+        network: this.config.network,
+        day,
+        producer: pr.producer,
+        blocks_expected: pr.blocksExpected,
+        blocks_produced: pr.blocksProduced,
+        blocks_missed: pr.blocksMissed,
+        produced: pr.blocksProduced > 0,
+      });
+
+      // Track outage streaks
+      this.updateOutageStreak(pr, result);
+    }
+
+    // Update round counts daily
+    await this.db.upsertRoundCountsDaily({
+      chain: this.config.chain,
+      network: this.config.network,
+      day,
+      perfect: result.producersMissed === 0,
+    });
+
+    await this.checkFirstCompleteRound(result.roundNumber);
+  }
+
+  private async persistRoundBatch(result: RoundResult): Promise<void> {
+    await this.db.transaction(async (client) => {
+      const roundId = await this.db.insertRound({
+        chain: this.config.chain,
+        network: this.config.network,
+        round_number: result.roundNumber,
+        schedule_version: result.scheduleVersion,
+        timestamp_start: result.timestampStart,
+        timestamp_end: result.timestampEnd,
+        producers_scheduled: result.producerResults.length,
+        producers_produced: result.producersProduced,
+        producers_missed: result.producersMissed,
+      }, client);
+
+      if (roundId === null) return; // duplicate round, skip
+
+      await this.db.insertRoundProducersBatch(
+        result.producerResults.map(pr => ({
+          round_id: roundId,
+          producer: pr.producer,
+          position: pr.position,
+          blocks_expected: pr.blocksExpected,
+          blocks_produced: pr.blocksProduced,
+          blocks_missed: pr.blocksMissed,
+          first_block: pr.firstBlock,
+          last_block: pr.lastBlock,
+        })),
+        client
+      );
+
+      const missedRows = result.producerResults
+        .filter(pr => pr.blocksMissed > 0)
+        .map(pr => ({
+          chain: this.config.chain,
+          network: this.config.network,
+          producer: pr.producer,
+          round_id: roundId,
+          blocks_missed: pr.blocksProduced === 0 ? pr.blocksExpected : pr.blocksMissed,
+          block_number: pr.blocksProduced === 0 ? null : pr.lastBlock,
+          timestamp: result.timestampEnd,
+        }));
+      await this.db.insertMissedBlockEventsBatch(missedRows, client);
+
+      const firstRound = await this.db.getState(
+        this.config.chain, this.config.network,
+        `${this.statePrefix}first_complete_round`, client
+      );
+      if (!firstRound) {
+        await this.db.setState(
+          this.config.chain, this.config.network,
+          `${this.statePrefix}first_complete_round`,
+          String(result.roundNumber), client
+        );
+      }
+    });
+  }
+
+  private updateOutageStreak(pr: ProducerRoundResult, result: RoundResult): void {
+    if (this.batchInserts) return; // catchup writer doesn't track live streaks
+
+    const streak = this.outageStreaks.get(pr.producer);
+
+    if (pr.blocksProduced === 0) {
+      // Extend or start an outage streak
+      if (streak) {
+        streak.count++;
+        streak.endRound = result.roundNumber;
+        streak.endTimestamp = result.timestampEnd;
+      } else {
+        this.outageStreaks.set(pr.producer, {
+          count: 1,
+          startRound: result.roundNumber,
+          startTimestamp: result.timestampStart,
+          endRound: result.roundNumber,
+          endTimestamp: result.timestampEnd,
+          scheduleVersion: result.scheduleVersion,
+        });
+      }
+    } else if (streak) {
+      // Producer came back — close the outage event
+      this.db.insertOutageEvent({
+        chain: this.config.chain,
+        network: this.config.network,
+        producer: pr.producer,
+        rounds_count: streak.count,
+        start_round_number: streak.startRound,
+        end_round_number: streak.endRound,
+        schedule_version: streak.scheduleVersion,
+        timestamp_start: streak.startTimestamp,
+        timestamp_end: streak.endTimestamp,
+      }).catch(err => {
+        log.error({ err, producer: pr.producer }, 'Failed to insert outage event');
+      });
+      this.outageStreaks.delete(pr.producer);
+    }
+  }
+
+  /** Flush any open outage streaks (e.g. on schedule change). */
+  async flushOutageStreaks(): Promise<void> {
+    for (const [producer, streak] of this.outageStreaks) {
+      await this.db.insertOutageEvent({
+        chain: this.config.chain,
+        network: this.config.network,
+        producer,
+        rounds_count: streak.count,
+        start_round_number: streak.startRound,
+        end_round_number: streak.endRound,
+        schedule_version: streak.scheduleVersion,
+        timestamp_start: streak.startTimestamp,
+        timestamp_end: streak.endTimestamp,
+      });
+    }
+    this.outageStreaks.clear();
+  }
+
+  private async checkFirstCompleteRound(roundNumber: number): Promise<void> {
+    const firstRound = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}first_complete_round`);
+    if (!firstRound) {
+      await this.db.setState(
+        this.config.chain, this.config.network,
+        `${this.statePrefix}first_complete_round`,
+        String(roundNumber)
+      );
     }
   }
 }
