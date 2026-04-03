@@ -29,6 +29,9 @@ export async function cleanTestDb(): Promise<void> {
     DELETE FROM producer_events;
     DELETE FROM weekly_summaries;
     DELETE FROM monthly_summaries;
+    DELETE FROM producer_stats_daily;
+    DELETE FROM outage_events;
+    DELETE FROM round_counts_daily;
     DELETE FROM rounds;
     DELETE FROM monitor_state;
   `);

@@ -158,6 +158,7 @@ describe('Database', () => {
 
     it('should compute all producer stats ranked by reliability', async () => {
       await seedData();
+      await db.reconcileDay('libre', 'mainnet', '2026-03-30');
       const allStats = await db.getAllProducerStats('libre', 'mainnet', 30);
       expect(allStats).toHaveLength(2);
       expect(allStats[0].producer).toBe('goodbp');
