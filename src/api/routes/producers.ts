@@ -81,8 +81,7 @@ export async function producerRoutes(
           }));
       }
 
-      // Limit outage calculation to last 1000 rounds for performance
-      const outages = await db.getLongestOutages(chain, network, 3, null);
+      const outages = await db.getLongestOutages(chain, network, days, since);
       const latestRound = await db.getLatestRoundProducerDetails(chain, network);
 
       const enrichedStats = stats.map((s: any) => {
@@ -138,6 +137,17 @@ export async function producerRoutes(
         return { chain, network, producer: name, error: 'Not found' };
       }
       return { chain, network, days, producer: stats };
+    }
+  );
+
+  app.get<{ Params: Required<ProducerParams>; Querystring: ProducerQuery }>(
+    '/api/v1/:chain/:network/producers/:name/outages',
+    async (request) => {
+      const { chain, network, name } = request.params;
+      const since = request.query.since && /^\d{4}-\d{2}-\d{2}/.test(request.query.since) ? request.query.since : null;
+      const days = since ? null : Math.max(1, Math.min(parseInt(request.query.days || '30', 10) || 30, 9999));
+      const details = await db.getProducerOutageDetails(chain, network, name, days, since);
+      return { chain, network, producer: name, days, ...details };
     }
   );
 }

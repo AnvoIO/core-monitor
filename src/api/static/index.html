@@ -196,7 +196,7 @@
   <footer>
     &copy; 2026 <a href="https://anvo.io">AnvoIO</a> &mdash;
     <a href="https://github.com/AnvoIO/core-monitor">AnvoIO/core-monitor</a>
-    <span style="margin-left:8px">v0.1.4</span>
+    <span style="margin-left:8px">v0.2.0</span>
   </footer>
 
   <script>
@@ -253,6 +253,48 @@
 
       document.getElementById('modalContent').innerHTML = html;
       document.getElementById('modalOverlay').classList.add('active');
+    }
+
+    async function showOutageDetail(producer) {
+      if (!activeChain) return;
+      const { chain, network } = activeChain;
+      const days = Math.ceil(getTimeframeDays());
+      const since = getTimeframeSince();
+      let url = `/api/v1/${chain}/${network}/producers/${encodeURIComponent(producer)}/outages`;
+      url += since ? `?since=${since}` : `?days=${days}`;
+      try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const chainCfg = activeChain || {};
+        const roundMs = (chainCfg.scheduleSize || 21) * (chainCfg.blocksPerBp || 12) * (chainCfg.blockTimeMs || 500);
+        function fmtDuration(rounds) {
+          const ms = rounds * roundMs;
+          const mins = Math.floor(ms / 60000);
+          const hrs = Math.floor(mins / 60);
+          if (hrs > 0) return `${hrs}h ${mins % 60}m`;
+          return `${mins}m`;
+        }
+        let html = `<h3>Outage History: ${esc(producer)}</h3>`;
+        html += `<div class="detail-row"><span class="detail-label">Total Outages</span><span class="detail-value">${data.total_outages}</span></div>`;
+        if (data.total_outages > 0) {
+          html += `<div class="detail-row"><span class="detail-label">Longest</span><span class="detail-value">${data.longest_streak} rounds (~${fmtDuration(data.longest_streak)})</span></div>`;
+          html += `<div class="detail-row"><span class="detail-label">Longest At</span><span class="detail-value">${formatTime(data.longest_streak_start)}</span></div>`;
+          html += `<div class="detail-row"><span class="detail-label">Average</span><span class="detail-value">${data.average_streak} rounds (~${fmtDuration(data.average_streak)})</span></div>`;
+          html += `<div style="margin-top:12px;font-size:13px;font-weight:600;color:var(--text-dim)">All Outages (longest first)</div>`;
+          html += `<table style="width:100%;margin-top:6px;font-size:12px;border-collapse:collapse">`;
+          html += `<thead><tr style="color:var(--text-dim);border-bottom:1px solid var(--border)"><th style="text-align:left;padding:4px">Rounds</th><th style="text-align:left;padding:4px">Duration</th><th style="text-align:left;padding:4px">Start</th><th style="text-align:left;padding:4px">End</th></tr></thead><tbody>`;
+          for (const o of data.outages) {
+            html += `<tr style="border-bottom:1px solid var(--border)"><td class="mono" style="padding:4px;color:var(--red)">${o.rounds}</td><td class="mono" style="padding:4px">${fmtDuration(o.rounds)}</td><td class="mono" style="padding:4px">${formatTime(o.start)}</td><td class="mono" style="padding:4px">${formatTime(o.end)}</td></tr>`;
+          }
+          html += `</tbody></table>`;
+        } else {
+          html += `<div class="detail-row"><span class="detail-value" style="color:var(--green)">No outages in this period</span></div>`;
+        }
+        document.getElementById('modalContent').innerHTML = html;
+        document.getElementById('modalOverlay').classList.add('active');
+      } catch (err) {
+        console.error('Failed to load outage details', err);
+      }
     }
 
     // Store schedule change data for click handlers
@@ -516,7 +558,7 @@
           <td class="mono">${hasData ? p.rounds_produced : '—'}</td>
           <td class="mono" style="color:${(p.rounds_missed||0)>0?'var(--red)':'var(--text-dim)'}">${hasData ? p.rounds_missed : '—'}</td>
           <td class="mono">${hasData ? `${p.total_blocks_produced}/${p.total_blocks_expected}` : '—'}</td>
-          <td class="mono" style="color:${outageColor}">${outage > 0 ? formatOutage(outage) : '—'}</td>
+          <td class="mono clickable" style="color:${outageColor};cursor:pointer" onclick="showOutageDetail('${esc(p.producer)}')">${outage > 0 ? formatOutage(outage) : '—'}</td>
           <td>${hasData ? `<div class="reliability-cell"><div class="bar-container"><div class="bar-fill" style="width:${Math.min(rel,100)}%;background:${barColor}"></div></div><span class="badge ${relBadge}">${rel.toFixed(2)}%</span></div>` : '<span style="color:var(--text-dim)">—</span>'}</td>
         </tr>`;
       }
