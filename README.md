@@ -16,10 +16,12 @@ Core Monitor tracks block producer performance in real-time using the State Hist
 - **Schedule-relative round numbering** — rounds numbered from schedule activation, reset on schedule changes
 - **Missed block detection** — per-producer, per-round tracking with configurable alerting
 - **Fork detection** — real-time microfork/fork identification from block ID mismatches
-- **Schedule change tracking** — detects new producer schedules, tracks additions/removals, shows pending schedules
+- **Schedule change tracking** — detects new producer schedules, tracks additions/removals/key updates, shows pending schedules
 - **Producer events** — monitors regproducer, unregprod, and kickbp actions
 - **Producer status** — Up/Degraded/Down based on actual block production in the latest round
-- **Historical backfill** — catchup writer streams from full-history SHiP nodes directly to PostgreSQL, automatically detects live writer boundary
+- **Historical backfill** — catchup writer streams from full-history SHiP nodes directly to PostgreSQL, automatically detects live writer boundary, resumes from last processed block on restart
+- **Summary tables** — daily aggregated stats (producer_stats_daily, outage_events, round_counts_daily) eliminate full-table scans on "All Time" queries, maintained incrementally by the live writer with hourly reconciliation
+- **Outage tracking** — per-producer outage history with streak detection, duration, and timeline
 - **Dashboard** — web-based UI with producer reliability rankings, round history, event log, timeframe selector, UTC/local toggle, pagination
 - **REST API** — JSON endpoints for all monitored data with input validation
 - **Alerting** — Telegram and Slack with enable/disable flags and throttling
@@ -100,7 +102,7 @@ CATCHUP_SHIP_URL=ws://your-history-node:8088
 docker compose --profile catchup up -d catchup
 ```
 
-The catchup writer automatically detects where the live writer started and stops there — no overlap, no manual coordination.
+The catchup writer automatically detects where the live writer started and stops there — no overlap, no manual coordination. On restart, it resumes from the last processed block rather than starting over.
 
 ### Development
 
@@ -274,6 +276,8 @@ volumes:
 | `GET /api/v1/chains` | List monitored chains |
 | `GET /api/v1/:chain/:network/status` | Monitor status, schedule, pending schedule |
 | `GET /api/v1/:chain/:network/producers` | Producer reliability, signing keys, status |
+| `GET /api/v1/:chain/:network/producers/:name` | Individual producer stats |
+| `GET /api/v1/:chain/:network/producers/:name/outages` | Outage history with streak details (`?days=`, `?since=`) |
 | `GET /api/v1/:chain/:network/rounds` | Round history (`?limit=`, `?offset=`, `?since=`) |
 | `GET /api/v1/:chain/:network/events` | Event log (`?type=`, `?limit=`, `?offset=`, `?since=`, `?until=`) |
 | `GET /api/v1/:chain/:network/summaries/weekly` | Weekly summaries |
@@ -333,6 +337,8 @@ GitHub Actions runs on all pull requests targeting `main` or `dev`:
 - **Serialized block processing** — blocks are processed sequentially via promise chain to prevent duplicate round evaluations
 - **Reader/writer separation** — API and SHiP processing run in separate containers for isolation
 - **Time filtering on `timestamp_start`** — queries filter on the round's actual timestamp, not the DB insertion time
+- **Summary tables** — daily aggregations avoid full-table scans; API queries read historical days from summaries and supplement with a live scan of today's raw data
+- **Incremental + reconciliation** — live writer upserts summaries per round (low overhead); hourly cron re-derives today's stats from raw data as a safety net
 
 ## License
 
