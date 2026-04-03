@@ -347,6 +347,7 @@ export class Database {
             SUM(rp.blocks_missed)
           FROM round_producers rp
           JOIN rounds r ON rp.round_id = r.id
+          WHERE r.timestamp_start != ''
           GROUP BY r.chain, r.network, DATE(r.timestamp_start), rp.producer
           ON CONFLICT (chain, network, day, producer) DO UPDATE SET
             rounds_scheduled = EXCLUDED.rounds_scheduled,
@@ -366,6 +367,7 @@ export class Database {
             SUM(CASE WHEN producers_missed = 0 THEN 1 ELSE 0 END)::INTEGER,
             SUM(CASE WHEN producers_missed > 0 THEN 1 ELSE 0 END)::INTEGER
           FROM rounds
+          WHERE timestamp_start != ''
           GROUP BY chain, network, DATE(timestamp_start)
           ON CONFLICT (chain, network, day) DO UPDATE SET
             total_rounds = EXCLUDED.total_rounds,
@@ -382,6 +384,7 @@ export class Database {
               CASE WHEN rp.blocks_produced = 0 THEN 0 ELSE 1 END as is_producing
             FROM round_producers rp
             JOIN rounds r ON rp.round_id = r.id
+            WHERE r.timestamp_start != ''
           ),
           groups AS (
             SELECT *, SUM(is_producing) OVER (
@@ -714,7 +717,7 @@ export class Database {
           SUM(CASE WHEN producers_missed = 0 THEN 1 ELSE 0 END) as perfect,
           SUM(CASE WHEN producers_missed > 0 THEN 1 ELSE 0 END) as issues
         FROM rounds
-        WHERE chain = $1 AND network = $2 AND timestamp_start >= $3
+        WHERE chain = $1 AND network = $2 AND timestamp_start >= $3::TEXT
       )
       SELECT
         (h.total + COALESCE(l.total, 0))::INTEGER as total,
@@ -802,7 +805,7 @@ export class Database {
           SUM(rp.blocks_missed) as total_blocks_missed
         FROM round_producers rp
         JOIN rounds r ON rp.round_id = r.id
-        WHERE r.chain = $1 AND r.network = $2 AND r.timestamp_start >= $4
+        WHERE r.chain = $1 AND r.network = $2 AND r.timestamp_start >= $4::TEXT
         GROUP BY rp.producer
       ),
       combined AS (
@@ -850,7 +853,7 @@ export class Database {
       `SELECT rp.producer, rp.blocks_produced
       FROM round_producers rp
       JOIN rounds r ON rp.round_id = r.id
-      WHERE r.chain = $1 AND r.network = $2 AND r.timestamp_start >= $3
+      WHERE r.chain = $1 AND r.network = $2 AND r.timestamp_start >= $3::TEXT
       ORDER BY rp.producer, r.timestamp_start ASC`,
       [chain, network, today]
     );
