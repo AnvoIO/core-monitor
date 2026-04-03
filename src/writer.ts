@@ -82,6 +82,19 @@ async function main(): Promise<void> {
     }
   }
 
+  // Reconcile daily summaries — every hour, re-derive today's stats from raw data
+  cron.schedule('0 * * * *', async () => {
+    const today = new Date().toISOString().substring(0, 10);
+    log.info({ day: today }, 'Reconciling daily summaries');
+    for (const chainConfig of config.chains) {
+      try {
+        await db.reconcileDay(chainConfig.chain, chainConfig.network, today);
+      } catch (err) {
+        log.error({ err, chain: chainConfig.id }, 'Failed to reconcile daily summaries');
+      }
+    }
+  });
+
   // Retention purge — daily at 00:00 UTC
   cron.schedule('0 0 * * *', async () => {
     log.info('Running scheduled retention purge');

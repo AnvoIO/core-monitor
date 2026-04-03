@@ -40,11 +40,12 @@ export class TelegramAlert implements AlertChannel {
     const indentedBody = message.body.split('\n').map(line => ` ${line}`).join('\n');
     const text = `${emoji} <b>${message.title}</b>\n${indentedBody}`;
 
-    // Always send to status channel
-    await this.sendToChat(ids.statusChatId, text);
+    const routing = message.routing || 'status';
 
-    // Critical alerts also go to alert channel
-    if (message.severity === 'alert' && ids.alertChatId !== ids.statusChatId) {
+    if (routing === 'status' || routing === 'both') {
+      await this.sendToChat(ids.statusChatId, text);
+    }
+    if ((routing === 'alert' || routing === 'both') && ids.alertChatId !== ids.statusChatId) {
       await this.sendToChat(ids.alertChatId, text);
     }
   }

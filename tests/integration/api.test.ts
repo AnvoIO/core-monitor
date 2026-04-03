@@ -71,6 +71,7 @@ describe('API Routes', () => {
     db = await createTestDb();
     await cleanTestDb();
     await seedData();
+    await db.reconcileDay('libre', 'mainnet', '2026-03-30');
     app = await createServer(config, db);
     await app.ready();
   });

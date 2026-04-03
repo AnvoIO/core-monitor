@@ -79,8 +79,14 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
     return;
   }
 
-  const startBlock = parseInt(process.env.CATCHUP_START_BLOCK || '1', 10);
+  const configStartBlock = parseInt(process.env.CATCHUP_START_BLOCK || '1', 10);
   const endBlock = await findLiveWriterStartBlock(db, chainConfig.chain, chainConfig.network);
+
+  // Resume from last processed block if available
+  const savedBlock = await db.getState(chainConfig.chain, chainConfig.network, 'catchup_last_block');
+  const resumeBlock = savedBlock ? parseInt(savedBlock, 10) + 1 : 0;
+  const startBlock = resumeBlock > configStartBlock ? resumeBlock : configStartBlock;
+  const resuming = resumeBlock > configStartBlock;
 
   if (endBlock > 0 && startBlock >= endBlock) {
     log.info({ chain: chainConfig.id, startBlock, endBlock }, 'Already caught up');
@@ -92,17 +98,26 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
     shipUrl,
     startBlock,
     endBlock: endBlock || 'until live writer start',
+    resumed: resuming ? `from block ${resumeBlock}` : false,
   }, 'Starting catchup');
 
   const schedule = new ScheduleTracker(chainConfig.chain, chainConfig.network, db, 'catchup_');
-  // Do NOT call schedule.init() — the catchup writer starts from genesis
-  // with an empty schedule and must detect every schedule change from the
-  // block stream. The live writer's schedule state is in the shared DB
-  // and would poison our starting state.
-  const evaluator = new RoundEvaluator(chainConfig, db, schedule, 'catchup_');
-  await evaluator.init();
+  const evaluator = new RoundEvaluator(chainConfig, db, schedule, 'catchup_', {
+    stateWriteInterval: 100,
+    batchInserts: true,
+  });
 
-  log.info({ chain: chainConfig.id }, 'Starting with empty schedule — will detect from block headers');
+  if (resuming) {
+    // Resuming — restore schedule and evaluator state from the database
+    await schedule.init();
+    await evaluator.init();
+    log.info({ chain: chainConfig.id, scheduleVersion: schedule.version },
+      'Resumed catchup — restored schedule and evaluator state from DB');
+  } else {
+    // Fresh start from genesis — empty schedule, detect from block headers
+    await evaluator.init();
+    log.info({ chain: chainConfig.id }, 'Starting with empty schedule — will detect from block headers');
+  }
 
   const state: CatchupChain = {
     config: chainConfig,

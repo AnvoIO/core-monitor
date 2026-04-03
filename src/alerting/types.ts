@@ -1,7 +1,9 @@
 export type AlertSeverity = 'info' | 'warn' | 'alert';
+export type AlertRouting = 'status' | 'alert' | 'both';
 
 export interface AlertMessage {
   severity: AlertSeverity;
+  routing?: AlertRouting;
   chain: string;
   network: string;
   title: string;

@@ -71,7 +71,7 @@ export class AlertManager {
     await Promise.all(sends);
   }
 
-  // -- Per-producer alerts (individual notifications) --
+  // -- Per-producer alerts (alert channel only) --
 
   async missedRound(params: {
     chain: string;
@@ -85,6 +85,7 @@ export class AlertManager {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
       severity: 'alert',
+      routing: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Missed Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -107,6 +108,7 @@ export class AlertManager {
     const roundNum = params.round.toLocaleString();
     await this.sendAlert({
       severity: 'alert',
+      routing: 'alert',
       chain: params.chain,
       network: params.network,
       title: `Missed Blocks [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -156,6 +158,7 @@ export class AlertManager {
 
     await this.sendAlert({
       severity: 'alert',
+      routing: 'status',
       chain: params.chain,
       network: params.network,
       title: `Degraded Round [ Schedule ${params.scheduleVersion} / Round ${roundNum} ]`,
@@ -211,6 +214,7 @@ export class AlertManager {
 
       await this.sendAlert({
         severity: 'info',
+        routing: 'both',
         chain,
         network,
         title: `Status Update \u2014 Rounds ${roundSpan}`,
@@ -301,7 +305,7 @@ export class AlertManager {
     });
   }
 
-  async fork(params: {
+  async fork(_params: {
     chain: string;
     network: string;
     blockNumber: number;
@@ -309,13 +313,7 @@ export class AlertManager {
     replacementProducer: string;
     timestamp: string;
   }): Promise<void> {
-    await this.sendAlert({
-      severity: 'alert',
-      chain: params.chain,
-      network: params.network,
-      title: `Forked Block [ block ${params.blockNumber} ]`,
-      body: `\u26A0\uFE0F Forked Block: ${params.originalProducer} block ${params.blockNumber} replaced by ${params.replacementProducer}`,
-      timestamp: params.timestamp,
-    });
+    // Individual fork alerts suppressed — forks are reported as line items
+    // in the degraded round recap on the status channel
   }
 }

@@ -160,6 +160,70 @@ All configuration is via environment variables (see `.env.example`):
 | `{CHAIN}_CATCHUP_SHIP_URL` | Per-chain override | optional |
 | `CATCHUP_START_BLOCK` | Start block for backfill | `1` |
 
+## Alerting
+
+The writer sends alerts to configured Telegram and/or Slack channels. Each chain can have separate status and alert chat IDs for Telegram (`TELEGRAM_{CHAIN}_STATUS_CHAT_ID`, `TELEGRAM_{CHAIN}_ALERT_CHAT_ID`).
+
+### Alert Types and Routing
+
+```
+┌───────────────────────┬────────┬────────┬───────┐
+│         Alert         │ Header │ Status │ Alert │
+├───────────────────────┼────────┼────────┼───────┤
+│ Missed Round          │ 🚨     │        │ ✓     │
+├───────────────────────┼────────┼────────┼───────┤
+│ Missed Blocks         │ 🚨     │        │ ✓     │
+├───────────────────────┼────────┼────────┼───────┤
+│ Degraded Round        │ 🚨     │ ✓      │       │
+├───────────────────────┼────────┼────────┼───────┤
+│ Schedule Active       │ ✅     │ ✓      │       │
+├───────────────────────┼────────┼────────┼───────┤
+│ Producer Registered   │ ✅     │ ✓      │       │
+├───────────────────────┼────────┼────────┼───────┤
+│ Producer Kicked       │ ⚠️     │ ✓      │       │
+├───────────────────────┼────────┼────────┼───────┤
+│ Producer Unregistered │ ✅     │ ✓      │       │
+├───────────────────────┼────────┼────────┼───────┤
+│ Status Update (6hr)   │ ✅     │ ✓      │ ✓     │
+└───────────────────────┴────────┴────────┴───────┘
+```
+
+- **Missed Round** — Producer produced 0 blocks in a round
+- **Missed Blocks** — Producer produced some but not all blocks
+- **Degraded Round** — Round summary with all issues (missed rounds, missed blocks, forks)
+- **Schedule Active** — New schedule version activated (shows ✚ added, − removed, 🔑 key updates)
+- **Producer Registered/Kicked/Unregistered** — `regproducer`, `kickbp`, `unregprod` actions
+- **Status Update** — Periodic 6-hour summary: rounds evaluated, reliability %, round span
+
+**Status channel** — operational updates, round recaps, schedule changes. Low-noise overview of chain health.
+
+**Alert channel** — actionable alerts requiring attention. Individual missed round/block events for each affected producer.
+
+### Message Format
+
+All messages follow a consistent format with indented body lines:
+
+```
+🚨 Degraded Round [ Schedule 486 / Round 14 ]
+ ❌ Missed Round: badprod produced 0 of 12 blocks
+ ⚠️ Missed Blocks: flaky produced 8 of 12 blocks
+ ⚠️ Forked Block: bp1 block 235702100 replaced by bp2
+```
+
+```
+✅ Schedule v487 Now Active
+ Schedule v487 (21 producers) at block 235702237
+ ✚ heliosblocks
+ − batcavebp
+```
+
+```
+✅ Status Update — Rounds 486:100 → 486:243
+ 143 rounds evaluated, 143 perfect
+ 21 active producers, 100.00% reliability
+ See https://monitor.cryptobloks.io/ for details.
+```
+
 ## Database
 
 ### PostgreSQL Tuning
