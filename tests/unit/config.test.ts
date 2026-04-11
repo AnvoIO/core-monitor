@@ -19,6 +19,7 @@ describe('Config', () => {
     delete process.env.CHAINS;
     delete process.env.LIBRE_MAINNET_SHIP_URL;
     delete process.env.LIBRE_MAINNET_SHIP_FAILOVER_URL;
+    delete process.env.LIBRE_MAINNET_CATCHUP_SHIP_URL;
     delete process.env.LIBRE_MAINNET_API_URL;
     delete process.env.LIBRE_MAINNET_CHAIN_ID;
     delete process.env.LIBRE_MAINNET_SCHEDULE_SIZE;
@@ -80,7 +81,7 @@ describe('Config', () => {
     expect(config.chains[0].scheduleSize).toBe(21);
     expect(config.chains[0].blocksPerBp).toBe(12);
     expect(config.chains[0].blockTimeMs).toBe(500);
-    expect(config.chains[0].shipFailoverUrl).toBeUndefined();
+    expect(config.chains[0].shipFailoverUrls).toEqual([]);
     expect(config.chains[0].telegram).toBeUndefined();
   });
 
@@ -97,7 +98,7 @@ describe('Config', () => {
     expect(config.chains[0].scheduleSize).toBe(42);
     expect(config.chains[0].blocksPerBp).toBe(6);
     expect(config.chains[0].blockTimeMs).toBe(250);
-    expect(config.chains[0].shipFailoverUrl).toBe('wss://failover.example.com/');
+    expect(config.chains[0].shipFailoverUrls).toContain('wss://failover.example.com/');
   });
 
   it('should parse Telegram config when chat IDs are set', async () => {

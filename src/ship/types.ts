@@ -80,7 +80,7 @@ export type ShipClientState = 'disconnected' | 'connecting' | 'connected' | 'str
 
 export interface ShipClientOptions {
   url: string;
-  failoverUrl?: string;
+  failoverUrls?: string[];
   startBlock?: number;
   endBlock?: number;
   fetchBlock?: boolean;
@@ -88,4 +88,6 @@ export interface ShipClientOptions {
   fetchDeltas?: boolean;
   maxReconnectAttempts?: number;
   reconnectDelayMs?: number;
+  /** Kill the connection if no message arrives within this many ms (default 30000) */
+  stallTimeoutMs?: number;
 }

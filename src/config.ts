@@ -7,7 +7,7 @@ export interface ChainConfig {
   chain: string;
   network: string;
   shipUrl: string;
-  shipFailoverUrl?: string;
+  shipFailoverUrls: string[];
   apiUrl: string;
   hyperionUrl?: string;
   chainId: string;
@@ -55,12 +55,17 @@ function parseChainConfig(id: string): ChainConfig {
   const prefix = id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
   const [chain, network] = id.split('_');
 
+  const shipFailoverUrls = [
+    optionalEnv(`${prefix}_SHIP_FAILOVER_URL`),
+    optionalEnv(`${prefix}_CATCHUP_SHIP_URL`),
+  ].filter(Boolean);
+
   return {
     id,
     chain,
     network,
     shipUrl: requireEnv(`${prefix}_SHIP_URL`),
-    shipFailoverUrl: optionalEnv(`${prefix}_SHIP_FAILOVER_URL`) || undefined,
+    shipFailoverUrls,
     apiUrl: requireEnv(`${prefix}_API_URL`),
     hyperionUrl: optionalEnv(`${prefix}_HYPERION_URL`) || undefined,
     chainId: requireEnv(`${prefix}_CHAIN_ID`),
