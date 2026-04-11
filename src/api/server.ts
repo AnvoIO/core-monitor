@@ -1,7 +1,10 @@
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
+import { readFileSync } from 'fs';
 import { logger } from '../utils/logger.js';
+
+const { version } = JSON.parse(readFileSync(path.resolve(__dirname, '../../package.json'), 'utf8'));
 import { healthRoutes } from './routes/health.js';
 import { chainRoutes } from './routes/chains.js';
 import { producerRoutes } from './routes/producers.js';
@@ -51,9 +54,18 @@ export async function createServer(config: AppConfig, db: Database) {
 
   // Serve static dashboard files
   const staticDir = path.resolve(__dirname, 'static');
+
+  // Serve index.html with version from package.json
+  const indexHtml = readFileSync(path.join(staticDir, 'index.html'), 'utf8')
+    .replace('{{VERSION}}', version);
+  app.get('/', async (_request, reply) => {
+    reply.type('text/html').send(indexHtml);
+  });
+
   await app.register(fastifyStatic, {
     root: staticDir,
     prefix: '/',
+    index: false,
   });
 
   // Register API routes
