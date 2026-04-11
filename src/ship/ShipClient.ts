@@ -295,6 +295,9 @@ export class ShipClient extends EventEmitter {
   private state: ShipClientState = 'disconnected';
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private stallTimer: NodeJS.Timeout | null = null;
+  private urls: string[];
+  private urlIndex = 0;
   private currentUrl: string;
   private receivedAbi = false;
   private readonly maxInFlight = 10;
@@ -303,7 +306,7 @@ export class ShipClient extends EventEmitter {
     super();
     this.options = {
       url: options.url,
-      failoverUrl: options.failoverUrl || '',
+      failoverUrls: options.failoverUrls || [],
       startBlock: options.startBlock || 0,
       endBlock: options.endBlock || 0xffffffff,
       fetchBlock: options.fetchBlock !== false,
@@ -311,12 +314,45 @@ export class ShipClient extends EventEmitter {
       fetchDeltas: options.fetchDeltas || false,
       maxReconnectAttempts: options.maxReconnectAttempts || 100,
       reconnectDelayMs: options.reconnectDelayMs || 3000,
+      stallTimeoutMs: options.stallTimeoutMs || 30000,
     };
-    this.currentUrl = this.options.url;
+    this.urls = [this.options.url, ...this.options.failoverUrls];
+    this.currentUrl = this.urls[0];
   }
 
   get connectionState(): ShipClientState {
     return this.state;
+  }
+
+  private resetStallTimer(): void {
+    if (this.stallTimer) clearTimeout(this.stallTimer);
+    if (this.state !== 'streaming' && this.state !== 'connected') return;
+
+    this.stallTimer = setTimeout(() => {
+      log.warn(
+        { url: this.currentUrl, timeoutMs: this.options.stallTimeoutMs },
+        'SHiP stall detected — no data received, forcing reconnect'
+      );
+      this.forceReconnect();
+    }, this.options.stallTimeoutMs);
+  }
+
+  private clearStallTimer(): void {
+    if (this.stallTimer) {
+      clearTimeout(this.stallTimer);
+      this.stallTimer = null;
+    }
+  }
+
+  private forceReconnect(): void {
+    this.clearStallTimer();
+    if (this.ws) {
+      this.ws.removeAllListeners();
+      this.ws.close();
+      this.ws = null;
+    }
+    this.state = 'disconnected';
+    this.scheduleReconnect();
   }
 
   async connect(): Promise<void> {
@@ -336,10 +372,12 @@ export class ShipClient extends EventEmitter {
       this.ws.on('open', () => {
         log.info('SHiP WebSocket connected, waiting for ABI');
         this.reconnectAttempts = 0;
+        this.resetStallTimer();
         resolve();
       });
 
       this.ws.on('message', (data: ArrayBuffer | Buffer | string) => {
+        this.resetStallTimer();
         if (!this.receivedAbi) {
           this.handleAbiMessage(data);
         } else {
@@ -349,6 +387,7 @@ export class ShipClient extends EventEmitter {
 
       this.ws.on('close', (code, reason) => {
         log.warn({ code, reason: reason.toString() }, 'SHiP WebSocket closed');
+        this.clearStallTimer();
         this.state = 'disconnected';
         this.ws = null;
         this.scheduleReconnect();
@@ -407,6 +446,7 @@ export class ShipClient extends EventEmitter {
   }
 
   disconnect(): void {
+    this.clearStallTimer();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -738,13 +778,11 @@ export class ShipClient extends EventEmitter {
       return;
     }
 
-    // Toggle between primary and failover URL
-    if (this.options.failoverUrl && this.reconnectAttempts > 0 && this.reconnectAttempts % 3 === 0) {
-      this.currentUrl =
-        this.currentUrl === this.options.url
-          ? this.options.failoverUrl
-          : this.options.url;
-      log.info({ url: this.currentUrl }, 'Switching to failover SHiP endpoint');
+    // Cycle through URLs round-robin on each attempt
+    if (this.urls.length > 1) {
+      this.urlIndex = (this.urlIndex + 1) % this.urls.length;
+      this.currentUrl = this.urls[this.urlIndex];
+      log.info({ url: this.currentUrl, urlIndex: this.urlIndex }, 'Switching SHiP endpoint');
     }
 
     const delay = Math.min(

@@ -70,7 +70,8 @@ async function main(): Promise<void> {
     monitor.on('fork', (params) => alertManager.fork(params));
 
     monitor.on('fatal', (err) => {
-      log.error({ err, chain: chainConfig.id }, 'Chain monitor fatal error');
+      log.error({ err, chain: chainConfig.id }, 'Chain monitor fatal error — exiting for restart');
+      process.exit(1);
     });
 
     try {

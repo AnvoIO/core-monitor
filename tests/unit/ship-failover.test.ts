@@ -5,70 +5,63 @@ describe('ShipClient Failover', () => {
   it('should store primary and failover URLs', () => {
     const client = new ShipClient({
       url: 'wss://primary.example.com/',
-      failoverUrl: 'wss://failover.example.com/',
+      failoverUrls: ['wss://failover.example.com/'],
     });
 
-    // Verify initial URL is primary
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
-    expect((client as any).options.failoverUrl).toBe('wss://failover.example.com/');
+    expect((client as any).urls).toEqual([
+      'wss://primary.example.com/',
+      'wss://failover.example.com/',
+    ]);
   });
 
-  it('should toggle to failover URL every 3rd reconnect attempt', () => {
+  it('should cycle through URLs round-robin on reconnect', () => {
     const client = new ShipClient({
       url: 'wss://primary.example.com/',
-      failoverUrl: 'wss://failover.example.com/',
-      reconnectDelayMs: 1, // fast for testing
+      failoverUrls: [
+        'wss://failover.example.com/',
+        'ws://local.example.com:8080',
+      ],
+      reconnectDelayMs: 1,
     });
 
-    // Simulate reconnect attempts by calling scheduleReconnect
-    // Access private method via any
-    const scheduleReconnect = (client as any).scheduleReconnect.bind(client);
-
-    // Attempt 1 — stays on primary
-    (client as any).reconnectAttempts = 1;
+    // Initial URL is primary (index 0)
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
+    expect((client as any).urlIndex).toBe(0);
 
-    // Attempt 3 — should switch to failover
-    (client as any).reconnectAttempts = 3;
-    // The toggle happens inside scheduleReconnect when reconnectAttempts % 3 === 0
-    // Simulate the check
-    if ((client as any).options.failoverUrl && (client as any).reconnectAttempts % 3 === 0) {
-      (client as any).currentUrl = (client as any).options.failoverUrl;
-    }
+    // First reconnect -> index 1 (failover)
+    (client as any).scheduleReconnect();
     expect((client as any).currentUrl).toBe('wss://failover.example.com/');
+    expect((client as any).urlIndex).toBe(1);
 
-    // Attempt 6 — should switch back to primary
-    (client as any).reconnectAttempts = 6;
-    if ((client as any).options.failoverUrl && (client as any).reconnectAttempts % 3 === 0) {
-      (client as any).currentUrl = (client as any).currentUrl === (client as any).options.url
-        ? (client as any).options.failoverUrl
-        : (client as any).options.url;
-    }
+    // Second reconnect -> index 2 (local)
+    (client as any).scheduleReconnect();
+    expect((client as any).currentUrl).toBe('ws://local.example.com:8080');
+    expect((client as any).urlIndex).toBe(2);
+
+    // Third reconnect -> wraps to index 0 (primary)
+    (client as any).scheduleReconnect();
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
+    expect((client as any).urlIndex).toBe(0);
   });
 
-  it('should not attempt failover when no failover URL is configured', () => {
+  it('should not cycle URLs when only primary is configured', () => {
     const client = new ShipClient({
       url: 'wss://primary.example.com/',
     });
 
-    expect((client as any).options.failoverUrl).toBe('');
+    expect((client as any).urls).toEqual(['wss://primary.example.com/']);
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
 
-    // Even after many attempts, should stay on primary
-    (client as any).reconnectAttempts = 6;
-    // The condition checks failoverUrl exists first
-    if ((client as any).options.failoverUrl && (client as any).reconnectAttempts % 3 === 0) {
-      // This should NOT execute
-      (client as any).currentUrl = 'should-not-happen';
-    }
+    // After reconnect, should stay on primary
+    (client as any).scheduleReconnect();
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
   });
 
-  it('should reset reconnect attempts after successful connection', async () => {
+  it('should reset reconnect attempts after successful connection', () => {
     const client = new ShipClient({
       url: 'wss://primary.example.com/',
-      failoverUrl: 'wss://failover.example.com/',
+      failoverUrls: ['wss://failover.example.com/'],
     });
 
     (client as any).reconnectAttempts = 5;
@@ -84,7 +77,6 @@ describe('ShipClient Failover', () => {
       reconnectDelayMs: 3000,
     });
 
-    // Verify backoff formula: min(3000 * 2^min(attempt, 6), 60000)
     const calcDelay = (attempt: number) => Math.min(
       3000 * Math.pow(2, Math.min(attempt, 6)),
       60000
@@ -117,13 +109,13 @@ describe('ShipClient Failover', () => {
     expect(emitted).toBe(true);
   });
 
-  it('should clean up on disconnect', () => {
+  it('should clean up on disconnect including stall timer', () => {
     const client = new ShipClient({
       url: 'wss://primary.example.com/',
     });
 
-    // Set up some state
     (client as any).reconnectTimer = setTimeout(() => {}, 10000);
+    (client as any).stallTimer = setTimeout(() => {}, 10000);
     (client as any).state = 'connected';
 
     client.disconnect();
@@ -131,6 +123,7 @@ describe('ShipClient Failover', () => {
     expect((client as any).state).toBe('disconnected');
     expect((client as any).ws).toBeNull();
     expect((client as any).reconnectTimer).toBeNull();
+    expect((client as any).stallTimer).toBeNull();
   });
 
   it('should update startBlock for resume', () => {
@@ -143,5 +136,38 @@ describe('ShipClient Failover', () => {
 
     client.updateStartBlock(500);
     expect((client as any).options.startBlock).toBe(500);
+  });
+
+  it('should default stallTimeoutMs to 30000', () => {
+    const client = new ShipClient({
+      url: 'wss://primary.example.com/',
+    });
+
+    expect((client as any).options.stallTimeoutMs).toBe(30000);
+  });
+
+  it('should accept custom stallTimeoutMs', () => {
+    const client = new ShipClient({
+      url: 'wss://primary.example.com/',
+      stallTimeoutMs: 60000,
+    });
+
+    expect((client as any).options.stallTimeoutMs).toBe(60000);
+  });
+
+  it('should trigger forceReconnect on stall and cycle URL', () => {
+    const client = new ShipClient({
+      url: 'wss://primary.example.com/',
+      failoverUrls: ['wss://failover.example.com/'],
+      stallTimeoutMs: 100,
+    });
+
+    // Simulate stall detection triggering forceReconnect
+    (client as any).state = 'streaming';
+    (client as any).forceReconnect();
+
+    // Should be disconnected and URL should have cycled
+    expect((client as any).state).toBe('disconnected');
+    expect((client as any).currentUrl).toBe('wss://failover.example.com/');
   });
 });
