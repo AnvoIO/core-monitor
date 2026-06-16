@@ -419,7 +419,25 @@ export class Database {
         log.info('Migration v6 complete — summary tables populated');
       }
 
-      log.info({ version: 6 }, 'Database schema up to date');
+      if (currentVersion < 7) {
+        log.info('Running migration v7: deduplicate fork_events');
+
+        await client.query(`
+          DELETE FROM fork_events a USING fork_events b
+          WHERE a.id > b.id
+            AND a.chain = b.chain AND a.network = b.network
+            AND a.block_number = b.block_number
+            AND a.original_producer = b.original_producer
+            AND a.replacement_producer = b.replacement_producer;
+
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_fork_events_dedup
+            ON fork_events(chain, network, block_number, original_producer, replacement_producer);
+
+          INSERT INTO schema_version (version) VALUES (7);
+        `);
+      }
+
+      log.info({ version: 7 }, 'Database schema up to date');
     } finally {
       client.release();
     }
@@ -575,7 +593,9 @@ export class Database {
     await this.pool.query(
       `INSERT INTO fork_events (chain, network, round_id,
         block_number, original_producer, replacement_producer, timestamp)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (chain, network, block_number, original_producer, replacement_producer)
+      DO NOTHING`,
       [params.chain, params.network, params.round_id,
        params.block_number, params.original_producer, params.replacement_producer, params.timestamp]
     );

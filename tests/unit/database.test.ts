@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { createTestDb, cleanTestDb, getTestPgUrl } from '../setup.js';
 import { Database } from '../../src/store/Database.js';
 
+const TEST_DAY = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
+
 describe('Database', () => {
   let db: Database;
 
@@ -45,8 +47,8 @@ describe('Database', () => {
     it('should insert and retrieve a round', async () => {
       const roundId = await db.insertRound({
         chain: 'libre', network: 'mainnet', round_number: 1,
-        schedule_version: 5, timestamp_start: '2026-03-30T00:00:00.000',
-        timestamp_end: '2026-03-30T00:02:06.000', producers_scheduled: 21,
+        schedule_version: 5, timestamp_start: `${TEST_DAY}T00:00:00.000`,
+        timestamp_end: `${TEST_DAY}T00:02:06.000`, producers_scheduled: 21,
         producers_produced: 20, producers_missed: 1,
       });
       expect(roundId).toBeGreaterThan(0);
@@ -59,8 +61,8 @@ describe('Database', () => {
       for (let i = 1; i <= 5; i++) {
         await db.insertRound({
           chain: 'libre', network: 'mainnet', round_number: i,
-          schedule_version: 1, timestamp_start: `2026-03-30T00:0${i}:00.000`,
-          timestamp_end: `2026-03-30T00:0${i}:30.000`, producers_scheduled: 21,
+          schedule_version: 1, timestamp_start: `${TEST_DAY}T00:0${i}:00.000`,
+          timestamp_end: `${TEST_DAY}T00:0${i}:30.000`, producers_scheduled: 21,
           producers_produced: 21, producers_missed: 0,
         });
       }
@@ -73,8 +75,8 @@ describe('Database', () => {
     it('should isolate rounds by chain/network', async () => {
       await db.insertRound({
         chain: 'libre', network: 'mainnet', round_number: 1,
-        schedule_version: 1, timestamp_start: '2026-03-30T00:00:00.000',
-        timestamp_end: '2026-03-30T00:02:00.000', producers_scheduled: 21,
+        schedule_version: 1, timestamp_start: `${TEST_DAY}T00:00:00.000`,
+        timestamp_end: `${TEST_DAY}T00:02:00.000`, producers_scheduled: 21,
         producers_produced: 21, producers_missed: 0,
       });
       expect(await db.getRecentRounds('libre', 'mainnet')).toHaveLength(1);
@@ -86,8 +88,8 @@ describe('Database', () => {
     it('should insert and retrieve round producers', async () => {
       const roundId = await db.insertRound({
         chain: 'libre', network: 'mainnet', round_number: 1,
-        schedule_version: 1, timestamp_start: '2026-03-30T00:00:00.000',
-        timestamp_end: '2026-03-30T00:02:00.000', producers_scheduled: 2,
+        schedule_version: 1, timestamp_start: `${TEST_DAY}T00:00:00.000`,
+        timestamp_end: `${TEST_DAY}T00:02:00.000`, producers_scheduled: 2,
         producers_produced: 1, producers_missed: 1,
       });
       await db.insertRoundProducer({
@@ -112,7 +114,7 @@ describe('Database', () => {
       await db.insertMissedBlockEvent({
         chain: 'libre', network: 'mainnet', producer: 'badproducer',
         round_id: null, blocks_missed: 12, block_number: 5000,
-        timestamp: '2026-03-30T00:01:00.000',
+        timestamp: `${TEST_DAY}T00:01:00.000`,
       });
       const events = await db.getMissedBlockEvents('libre', 'mainnet');
       expect(events).toHaveLength(1);
@@ -125,11 +127,25 @@ describe('Database', () => {
       await db.insertForkEvent({
         chain: 'libre', network: 'mainnet', round_id: null,
         block_number: 3000, original_producer: 'bp_a',
-        replacement_producer: 'bp_b', timestamp: '2026-03-30T00:00:30.000',
+        replacement_producer: 'bp_b', timestamp: `${TEST_DAY}T00:00:30.000`,
       });
       const events = await db.getForkEvents('libre', 'mainnet');
       expect(events).toHaveLength(1);
       expect(events[0].original_producer).toBe('bp_a');
+    });
+
+    it('should dedupe repeated inserts for the same fork', async () => {
+      const event = {
+        chain: 'libre', network: 'mainnet', round_id: null,
+        block_number: 4000, original_producer: 'bp_x',
+        replacement_producer: 'bp_y', timestamp: `${TEST_DAY}T00:01:00.000`,
+      };
+      await db.insertForkEvent(event);
+      await db.insertForkEvent(event);
+      await db.insertForkEvent(event);
+      const events = await db.getForkEvents('libre', 'mainnet');
+      const matching = events.filter(e => e.block_number === 4000);
+      expect(matching).toHaveLength(1);
     });
   });
 
@@ -138,8 +154,8 @@ describe('Database', () => {
       for (let i = 1; i <= 3; i++) {
         const roundId = await db.insertRound({
           chain: 'libre', network: 'mainnet', round_number: i,
-          schedule_version: 1, timestamp_start: `2026-03-30T00:0${i}:00.000`,
-          timestamp_end: `2026-03-30T00:0${i}:30.000`, producers_scheduled: 2,
+          schedule_version: 1, timestamp_start: `${TEST_DAY}T00:0${i}:00.000`,
+          timestamp_end: `${TEST_DAY}T00:0${i}:30.000`, producers_scheduled: 2,
           producers_produced: 2, producers_missed: 0,
         });
         await db.insertRoundProducer({
@@ -158,7 +174,7 @@ describe('Database', () => {
 
     it('should compute all producer stats ranked by reliability', async () => {
       await seedData();
-      await db.reconcileDay('libre', 'mainnet', '2026-03-30');
+      await db.reconcileDay('libre', 'mainnet', TEST_DAY);
       const allStats = await db.getAllProducerStats('libre', 'mainnet', 30);
       expect(allStats).toHaveLength(2);
       expect(allStats[0].producer).toBe('goodbp');
@@ -176,8 +192,8 @@ describe('Database', () => {
     it('should return production status for latest round', async () => {
       const roundId = await db.insertRound({
         chain: 'libre', network: 'mainnet', round_number: 1,
-        schedule_version: 1, timestamp_start: '2026-03-30T00:00:00.000',
-        timestamp_end: '2026-03-30T00:02:00.000', producers_scheduled: 2,
+        schedule_version: 1, timestamp_start: `${TEST_DAY}T00:00:00.000`,
+        timestamp_end: `${TEST_DAY}T00:02:00.000`, producers_scheduled: 2,
         producers_produced: 1, producers_missed: 1,
       });
       await db.insertRoundProducer({
