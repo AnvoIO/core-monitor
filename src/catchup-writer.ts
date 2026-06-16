@@ -11,6 +11,9 @@
  * Environment:
  *   CATCHUP_SHIP_URL — SHiP endpoint for full history node (required)
  *   CATCHUP_START_BLOCK — start block (default: 1)
+ *   CATCHUP_END_BLOCK — optional override; stop at this block instead of the
+ *     live writer's position. Per-chain form: {CHAIN_ID}_CATCHUP_END_BLOCK.
+ *     Use during recovery to let catchup outpace a far-behind live writer.
  *   POSTGRES_URL — PostgreSQL connection string (required)
  *   CHAINS — chain config (same as live writer)
  */
@@ -80,7 +83,17 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
   }
 
   const configStartBlock = parseInt(process.env.CATCHUP_START_BLOCK || '1', 10);
-  const endBlock = await findLiveWriterStartBlock(db, chainConfig.chain, chainConfig.network);
+
+  // Optional override: chase a specific block instead of stopping at the live
+  // writer's position. Used during recovery when the writer is far behind and
+  // we want catchup (3000+ bps) to fill the gap instead of waiting for the
+  // writer (~100 bps) to grind through it.
+  const chainPrefix = chainConfig.id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  const endBlockOverrideStr = process.env[`${chainPrefix}_CATCHUP_END_BLOCK`]
+    || process.env.CATCHUP_END_BLOCK;
+  const endBlock = endBlockOverrideStr
+    ? parseInt(endBlockOverrideStr, 10)
+    : await findLiveWriterStartBlock(db, chainConfig.chain, chainConfig.network);
 
   // Resume from last processed block if available
   const savedBlock = await db.getState(chainConfig.chain, chainConfig.network, 'catchup_last_block');
