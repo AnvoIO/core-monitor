@@ -338,6 +338,11 @@ export class RoundEvaluator {
       producers_missed: result.producersMissed,
     });
 
+    // Round was a duplicate (e.g. SHiP replay or restart over already-processed
+    // range) — skip all dependent inserts so we don't create orphan rows or
+    // double-count daily stats. Matches persistRoundBatch behavior.
+    if (roundId === null) return;
+
     const day = result.timestampStart.substring(0, 10);
 
     for (const pr of result.producerResults) {

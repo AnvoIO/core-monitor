@@ -110,15 +110,49 @@ describe('Database', () => {
   });
 
   describe('missed_block_events', () => {
+    async function seedRound() {
+      return await db.insertRound({
+        chain: 'libre', network: 'mainnet', round_number: 1,
+        schedule_version: 1, timestamp_start: `${TEST_DAY}T00:00:00.000`,
+        timestamp_end: `${TEST_DAY}T00:02:00.000`, producers_scheduled: 1,
+        producers_produced: 0, producers_missed: 1,
+      });
+    }
+
     it('should insert and retrieve missed block events', async () => {
+      const roundId = await seedRound();
+      await db.insertMissedBlockEvent({
+        chain: 'libre', network: 'mainnet', producer: 'badproducer',
+        round_id: roundId, blocks_missed: 12, block_number: 5000,
+        timestamp: `${TEST_DAY}T00:01:00.000`,
+      });
+      const events = await db.getMissedBlockEvents('libre', 'mainnet');
+      expect(events).toHaveLength(1);
+      expect(events[0].producer).toBe('badproducer');
+    });
+
+    it('should skip insert when round_id is null (orphan prevention)', async () => {
       await db.insertMissedBlockEvent({
         chain: 'libre', network: 'mainnet', producer: 'badproducer',
         round_id: null, blocks_missed: 12, block_number: 5000,
         timestamp: `${TEST_DAY}T00:01:00.000`,
       });
       const events = await db.getMissedBlockEvents('libre', 'mainnet');
+      expect(events).toHaveLength(0);
+    });
+
+    it('should dedupe repeated inserts for the same (round, producer)', async () => {
+      const roundId = await seedRound();
+      const event = {
+        chain: 'libre', network: 'mainnet', producer: 'badproducer',
+        round_id: roundId, blocks_missed: 12, block_number: 5000,
+        timestamp: `${TEST_DAY}T00:01:00.000`,
+      };
+      await db.insertMissedBlockEvent(event);
+      await db.insertMissedBlockEvent(event);
+      await db.insertMissedBlockEvent(event);
+      const events = await db.getMissedBlockEvents('libre', 'mainnet');
       expect(events).toHaveLength(1);
-      expect(events[0].producer).toBe('badproducer');
     });
   });
 
