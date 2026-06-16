@@ -437,7 +437,29 @@ export class Database {
         `);
       }
 
-      log.info({ version: 7 }, 'Database schema up to date');
+      if (currentVersion < 8) {
+        log.info('Running migration v8: deduplicate missed_block_events');
+
+        // Drop orphan rows (round_id NULL) left by the live writer reprocessing
+        // a duplicate round before the persistRoundIndividual skip was added.
+        // Then dedupe surviving rows by (round_id, producer) — natural key for
+        // a producer's miss in a specific round.
+        await client.query(`
+          DELETE FROM missed_block_events WHERE round_id IS NULL;
+
+          DELETE FROM missed_block_events a USING missed_block_events b
+          WHERE a.id > b.id
+            AND a.round_id = b.round_id
+            AND a.producer = b.producer;
+
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_missed_events_dedup
+            ON missed_block_events(round_id, producer);
+
+          INSERT INTO schema_version (version) VALUES (8);
+        `);
+      }
+
+      log.info({ version: 8 }, 'Database schema up to date');
     } finally {
       client.release();
     }
@@ -504,10 +526,12 @@ export class Database {
     block_number: number | null;
     timestamp: string;
   }): Promise<void> {
+    if (params.round_id === null) return; // round was a duplicate, skip
     await this.pool.query(
       `INSERT INTO missed_block_events (chain, network, producer,
         round_id, blocks_missed, block_number, timestamp)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (round_id, producer) DO NOTHING`,
       [params.chain, params.network, params.producer,
        params.round_id, params.blocks_missed, params.block_number, params.timestamp]
     );
@@ -560,12 +584,15 @@ export class Database {
     }>,
     client?: pg.PoolClient
   ): Promise<void> {
-    if (rows.length === 0) return;
+    // Skip rows without round_id — the round was a duplicate so we shouldn't
+    // emit orphan missed events. The unique index requires non-null round_id.
+    const valid = rows.filter(r => r.round_id !== null);
+    if (valid.length === 0) return;
     const cols = 7;
     const values: any[] = [];
     const placeholders: string[] = [];
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
+    for (let i = 0; i < valid.length; i++) {
+      const r = valid[i];
       const b = i * cols;
       placeholders.push(`($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7})`);
       values.push(r.chain, r.network, r.producer, r.round_id, r.blocks_missed, r.block_number, r.timestamp);
@@ -574,7 +601,8 @@ export class Database {
     await q.query(
       `INSERT INTO missed_block_events (chain, network, producer,
         round_id, blocks_missed, block_number, timestamp)
-      VALUES ${placeholders.join(',')}`,
+      VALUES ${placeholders.join(',')}
+      ON CONFLICT (round_id, producer) DO NOTHING`,
       values
     );
   }

@@ -31,6 +31,7 @@ describe('API Routes', () => {
   };
 
   async function seedData() {
+    let missedRoundId: number | null = null;
     for (let i = 1; i <= 5; i++) {
       const roundId = await db.insertRound({
         chain: 'libre', network: 'mainnet', round_number: i,
@@ -38,6 +39,7 @@ describe('API Routes', () => {
         timestamp_end: `${TEST_DAY}T00:0${i}:30.000`, producers_scheduled: 2,
         producers_produced: i <= 4 ? 2 : 1, producers_missed: i <= 4 ? 0 : 1,
       });
+      if (i === 5) missedRoundId = roundId;
       await db.insertRoundProducer({
         round_id: roundId, producer: 'goodbp', position: 0,
         blocks_expected: 12, blocks_produced: 12, blocks_missed: 0,
@@ -53,7 +55,7 @@ describe('API Routes', () => {
     }
     await db.insertMissedBlockEvent({
       chain: 'libre', network: 'mainnet', producer: 'okbp',
-      round_id: null, blocks_missed: 12, block_number: 500,
+      round_id: missedRoundId, blocks_missed: 12, block_number: 500,
       timestamp: `${TEST_DAY}T00:05:30.000`,
     });
     await db.insertForkEvent({
