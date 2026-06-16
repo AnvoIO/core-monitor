@@ -131,6 +131,20 @@ describe('Database', () => {
       expect(events).toHaveLength(1);
       expect(events[0].original_producer).toBe('bp_a');
     });
+
+    it('should dedupe repeated inserts for the same fork', async () => {
+      const event = {
+        chain: 'libre', network: 'mainnet', round_id: null,
+        block_number: 4000, original_producer: 'bp_x',
+        replacement_producer: 'bp_y', timestamp: '2026-03-30T00:01:00.000',
+      };
+      await db.insertForkEvent(event);
+      await db.insertForkEvent(event);
+      await db.insertForkEvent(event);
+      const events = await db.getForkEvents('libre', 'mainnet');
+      const matching = events.filter(e => e.block_number === 4000);
+      expect(matching).toHaveLength(1);
+    });
   });
 
   describe('producer stats', () => {
