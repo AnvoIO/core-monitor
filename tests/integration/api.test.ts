@@ -5,6 +5,8 @@ import { createTestDb, cleanTestDb, getTestPgUrl } from '../setup.js';
 import type { AppConfig } from '../../src/config.js';
 import type { FastifyInstance } from 'fastify';
 
+const TEST_DAY = new Date(Date.now() - 86400000).toISOString().substring(0, 10);
+
 describe('API Routes', () => {
   let app: FastifyInstance;
   let db: Database;
@@ -32,8 +34,8 @@ describe('API Routes', () => {
     for (let i = 1; i <= 5; i++) {
       const roundId = await db.insertRound({
         chain: 'libre', network: 'mainnet', round_number: i,
-        schedule_version: 1, timestamp_start: `2026-03-30T00:0${i}:00.000`,
-        timestamp_end: `2026-03-30T00:0${i}:30.000`, producers_scheduled: 2,
+        schedule_version: 1, timestamp_start: `${TEST_DAY}T00:0${i}:00.000`,
+        timestamp_end: `${TEST_DAY}T00:0${i}:30.000`, producers_scheduled: 2,
         producers_produced: i <= 4 ? 2 : 1, producers_missed: i <= 4 ? 0 : 1,
       });
       await db.insertRoundProducer({
@@ -52,18 +54,18 @@ describe('API Routes', () => {
     await db.insertMissedBlockEvent({
       chain: 'libre', network: 'mainnet', producer: 'okbp',
       round_id: null, blocks_missed: 12, block_number: 500,
-      timestamp: '2026-03-30T00:05:30.000',
+      timestamp: `${TEST_DAY}T00:05:30.000`,
     });
     await db.insertForkEvent({
       chain: 'libre', network: 'mainnet', round_id: null,
       block_number: 350, original_producer: 'okbp',
-      replacement_producer: 'goodbp', timestamp: '2026-03-30T00:03:15.000',
+      replacement_producer: 'goodbp', timestamp: `${TEST_DAY}T00:03:15.000`,
     });
     await db.insertScheduleChange({
       chain: 'libre', network: 'mainnet', schedule_version: 1,
       producers_added: '["goodbp","okbp"]', producers_removed: '[]',
       producer_list: '["goodbp","okbp"]', block_number: 1,
-      timestamp: '2026-03-30T00:00:00.000',
+      timestamp: `${TEST_DAY}T00:00:00.000`,
     });
   }
 
@@ -71,7 +73,7 @@ describe('API Routes', () => {
     db = await createTestDb();
     await cleanTestDb();
     await seedData();
-    await db.reconcileDay('libre', 'mainnet', '2026-03-30');
+    await db.reconcileDay('libre', 'mainnet', TEST_DAY);
     app = await createServer(config, db);
     await app.ready();
   });
