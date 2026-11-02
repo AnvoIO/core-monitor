@@ -62,7 +62,7 @@ Pull requests are welcome! Before submitting:
 
 - Unit tests: `npm run test:unit`
 - Integration tests: `npm run test:integration`
-- E2E tests: `npm run test:e2e` (requires network access to SHiP endpoints)
+- E2E tests: `npm run test:e2e` (requires network access to SHiP endpoints, plus `SHIP_CF_ACCESS_CLIENT_ID` and `SHIP_CF_ACCESS_CLIENT_SECRET`; skipped without them)
 - Full suite: `npm test`
 
 ## Conduct

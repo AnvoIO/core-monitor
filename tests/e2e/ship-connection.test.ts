@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { describe, it, expect } from 'vitest';
 import { ShipClient } from '../../src/ship/ShipClient.js';
 import type { ShipResult, ShipGetStatusResult } from '../../src/ship/types.js';
@@ -9,15 +10,26 @@ import type { ShipResult, ShipGetStatusResult } from '../../src/ship/types.js';
  * and verifies deserialization works correctly.
  *
  * Requires network access to ship.testnet.libre.pdx.cryptobloks.io and ship.testnet.libre.iad.cryptobloks.io.
+ * Both are behind Cloudflare Access, so set SHIP_CF_ACCESS_CLIENT_ID and
+ * SHIP_CF_ACCESS_CLIENT_SECRET in the environment or .env. Without them these tests skip.
  * Skip in CI with: SKIP_E2E=1 npm test
  */
+const clientId = process.env.SHIP_CF_ACCESS_CLIENT_ID;
+const clientSecret = process.env.SHIP_CF_ACCESS_CLIENT_SECRET;
+const access = clientId && clientSecret ? { clientId, clientSecret } : undefined;
+
 const SKIP_E2E = process.env.SKIP_E2E === '1' || process.env.CI === 'true';
-const describeE2E = SKIP_E2E ? describe.skip : describe;
+if (!SKIP_E2E && !access) {
+  // Vitest drops console output from files where every test is skipped.
+  process.stderr.write('Skipping SHiP E2E tests: SHIP_CF_ACCESS_CLIENT_ID and SHIP_CF_ACCESS_CLIENT_SECRET are not set\n');
+}
+const describeE2E = SKIP_E2E || !access ? describe.skip : describe;
 
 describeE2E('SHiP E2E - Libre Testnet', () => {
   it('should connect to SHiP and receive status', async () => {
     const client = new ShipClient({
       url: 'wss://ship.testnet.libre.pdx.cryptobloks.io',
+      access,
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: false,
@@ -47,6 +59,7 @@ describeE2E('SHiP E2E - Libre Testnet', () => {
   it('should receive and deserialize blocks', async () => {
     const client = new ShipClient({
       url: 'wss://ship.testnet.libre.pdx.cryptobloks.io',
+      access,
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: false,
@@ -96,6 +109,7 @@ describeE2E('SHiP E2E - Libre Testnet', () => {
   it('should receive blocks with deltas when requested', async () => {
     const client = new ShipClient({
       url: 'wss://ship.testnet.libre.pdx.cryptobloks.io',
+      access,
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: true,
@@ -129,6 +143,7 @@ describeE2E('SHiP E2E - Libre Testnet', () => {
   it('should connect to failover endpoint', async () => {
     const client = new ShipClient({
       url: 'wss://ship.testnet.libre.iad.cryptobloks.io',
+      access,
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: false,
