@@ -8,7 +8,7 @@ import type { ShipResult, ShipGetStatusResult } from '../../src/ship/types.js';
  * This test connects to the real SHiP WebSocket, receives blocks,
  * and verifies deserialization works correctly.
  *
- * Requires network access to api.testnet.libre.pdx.cryptobloks.io.
+ * Requires network access to ship.testnet.libre.pdx.cryptobloks.io and ship.testnet.libre.iad.cryptobloks.io.
  * Skip in CI with: SKIP_E2E=1 npm test
  */
 const SKIP_E2E = process.env.SKIP_E2E === '1' || process.env.CI === 'true';
@@ -17,7 +17,7 @@ const describeE2E = SKIP_E2E ? describe.skip : describe;
 describeE2E('SHiP E2E - Libre Testnet', () => {
   it('should connect to SHiP and receive status', async () => {
     const client = new ShipClient({
-      url: 'wss://api.testnet.libre.pdx.cryptobloks.io/',
+      url: 'wss://ship.testnet.libre.pdx.cryptobloks.io',
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: false,
@@ -46,7 +46,7 @@ describeE2E('SHiP E2E - Libre Testnet', () => {
 
   it('should receive and deserialize blocks', async () => {
     const client = new ShipClient({
-      url: 'wss://api.testnet.libre.pdx.cryptobloks.io/',
+      url: 'wss://ship.testnet.libre.pdx.cryptobloks.io',
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: false,
@@ -95,7 +95,7 @@ describeE2E('SHiP E2E - Libre Testnet', () => {
 
   it('should receive blocks with deltas when requested', async () => {
     const client = new ShipClient({
-      url: 'wss://api.testnet.libre.pdx.cryptobloks.io/',
+      url: 'wss://ship.testnet.libre.pdx.cryptobloks.io',
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: true,
@@ -128,7 +128,7 @@ describeE2E('SHiP E2E - Libre Testnet', () => {
 
   it('should connect to failover endpoint', async () => {
     const client = new ShipClient({
-      url: 'wss://api.testnet.libre.iad.cryptobloks.io/',
+      url: 'wss://ship.testnet.libre.iad.cryptobloks.io',
       fetchBlock: true,
       fetchTraces: false,
       fetchDeltas: false,
