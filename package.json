@@ -18,7 +18,7 @@
   "license": "MIT",
   "dependencies": {
     "@fastify/static": "^10.1.8",
-    "@wharfkit/antelope": "^1.0.7",
+    "@wharfkit/antelope": "^4.0.2",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
     "node-cron": "^4.6.0",
