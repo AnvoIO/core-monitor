@@ -123,7 +123,9 @@ All configuration is via environment variables (see `.env.example`):
 |---|---|---|
 | `CHAINS` | Comma-separated chain IDs to monitor | required |
 | `{CHAIN}_SHIP_URL` | Primary SHiP WebSocket URL | required |
-| `{CHAIN}_SHIP_FAILOVER_URL` | Failover SHiP endpoint | optional |
+| `{CHAIN}_SHIP_FAILOVER_URL` | Failover SHiP endpoint; the writer returns to the primary once it is healthy | optional |
+| `SHIP_CF_ACCESS_CLIENT_ID` | Cloudflare Access service token ID, sent only to public `wss://` SHiP hosts | optional |
+| `SHIP_CF_ACCESS_CLIENT_SECRET` | Cloudflare Access service token secret; set together with the ID | optional |
 | `{CHAIN}_API_URL` | Chain RPC endpoint | required |
 | `{CHAIN}_HYPERION_URL` | Hyperion v2 endpoint | optional |
 | `{CHAIN}_CHAIN_ID` | Expected chain ID | required |

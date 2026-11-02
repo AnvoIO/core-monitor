@@ -19,6 +19,8 @@ describe('Config', () => {
     delete process.env.CHAINS;
     delete process.env.LIBRE_MAINNET_SHIP_URL;
     delete process.env.LIBRE_MAINNET_SHIP_FAILOVER_URL;
+    delete process.env.SHIP_CF_ACCESS_CLIENT_ID;
+    delete process.env.SHIP_CF_ACCESS_CLIENT_SECRET;
     delete process.env.LIBRE_MAINNET_CATCHUP_SHIP_URL;
     delete process.env.LIBRE_MAINNET_API_URL;
     delete process.env.LIBRE_MAINNET_CHAIN_ID;
@@ -99,6 +101,30 @@ describe('Config', () => {
     expect(config.chains[0].blocksPerBp).toBe(6);
     expect(config.chains[0].blockTimeMs).toBe(250);
     expect(config.chains[0].shipFailoverUrls).toContain('wss://failover.example.com/');
+  });
+
+  it('should leave SHiP access unset by default', async () => {
+    setMinimalEnv();
+    const { loadConfig } = await import('../../src/config.js');
+    expect(loadConfig().chains[0].shipAccess).toBeUndefined();
+  });
+
+  it('should read SHiP access credentials when both are set', async () => {
+    setMinimalEnv();
+    process.env.SHIP_CF_ACCESS_CLIENT_ID = 'id-value';
+    process.env.SHIP_CF_ACCESS_CLIENT_SECRET = 'secret-value';
+    const { loadConfig } = await import('../../src/config.js');
+    expect(loadConfig().chains[0].shipAccess).toEqual({
+      clientId: 'id-value',
+      clientSecret: 'secret-value',
+    });
+  });
+
+  it('should ignore SHiP access credentials when only one is set', async () => {
+    setMinimalEnv();
+    process.env.SHIP_CF_ACCESS_CLIENT_SECRET = 'secret-value';
+    const { loadConfig } = await import('../../src/config.js');
+    expect(loadConfig().chains[0].shipAccess).toBeUndefined();
   });
 
   it('should parse Telegram config when chat IDs are set', async () => {

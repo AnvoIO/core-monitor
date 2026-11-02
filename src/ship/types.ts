@@ -78,6 +78,12 @@ export interface ShipGetStatusResult {
 
 export type ShipClientState = 'disconnected' | 'connecting' | 'connected' | 'streaming';
 
+/** Cloudflare Access service token. Sent only to public wss:// hosts. */
+export interface ShipAccessCredentials {
+  clientId: string;
+  clientSecret: string;
+}
+
 export interface ShipClientOptions {
   url: string;
   failoverUrls?: string[];
@@ -90,4 +96,9 @@ export interface ShipClientOptions {
   reconnectDelayMs?: number;
   /** Kill the connection if no message arrives within this many ms (default 30000) */
   stallTimeoutMs?: number;
+  /** Abort a connection attempt that hasn't completed its handshake in this many ms (default 10000) */
+  handshakeTimeoutMs?: number;
+  /** While on a failover endpoint, check the primary this often (default 60000) */
+  failbackIntervalMs?: number;
+  access?: ShipAccessCredentials;
 }
