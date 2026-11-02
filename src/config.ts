@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import { logger } from './utils/logger.js';
+import type { ShipAccessCredentials } from './ship/types.js';
 
 dotenv.config();
 
@@ -8,6 +10,7 @@ export interface ChainConfig {
   network: string;
   shipUrl: string;
   shipFailoverUrls: string[];
+  shipAccess?: ShipAccessCredentials;
   apiUrl: string;
   hyperionUrl?: string;
   chainId: string;
@@ -51,6 +54,18 @@ function optionalEnv(key: string, fallback: string = ''): string {
   return process.env[key] || fallback;
 }
 
+function parseShipAccess(): ShipAccessCredentials | undefined {
+  const clientId = optionalEnv('SHIP_CF_ACCESS_CLIENT_ID').trim();
+  const clientSecret = optionalEnv('SHIP_CF_ACCESS_CLIENT_SECRET').trim();
+  if (clientId && clientSecret) return { clientId, clientSecret };
+  if (clientId || clientSecret) {
+    logger.warn(
+      'Only one of SHIP_CF_ACCESS_CLIENT_ID / SHIP_CF_ACCESS_CLIENT_SECRET is set; sending no Access headers'
+    );
+  }
+  return undefined;
+}
+
 function parseChainConfig(id: string): ChainConfig {
   const prefix = id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
   const [chain, network] = id.split('_');
@@ -66,6 +81,7 @@ function parseChainConfig(id: string): ChainConfig {
     network,
     shipUrl: requireEnv(`${prefix}_SHIP_URL`),
     shipFailoverUrls,
+    shipAccess: parseShipAccess(),
     apiUrl: requireEnv(`${prefix}_API_URL`),
     hyperionUrl: optionalEnv(`${prefix}_HYPERION_URL`) || undefined,
     chainId: requireEnv(`${prefix}_CHAIN_ID`),

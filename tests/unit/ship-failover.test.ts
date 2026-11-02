@@ -29,20 +29,43 @@ describe('ShipClient Failover', () => {
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
     expect((client as any).urlIndex).toBe(0);
 
+    const nextAttempt = () => {
+      clearTimeout((client as any).reconnectTimer);
+      (client as any).reconnectTimer = null;
+      (client as any).scheduleReconnect();
+    };
+
     // First reconnect -> index 1 (failover)
-    (client as any).scheduleReconnect();
+    nextAttempt();
     expect((client as any).currentUrl).toBe('wss://failover.example.com/');
     expect((client as any).urlIndex).toBe(1);
 
     // Second reconnect -> index 2 (local)
-    (client as any).scheduleReconnect();
+    nextAttempt();
     expect((client as any).currentUrl).toBe('ws://local.example.com:8080');
     expect((client as any).urlIndex).toBe(2);
 
     // Third reconnect -> wraps to index 0 (primary)
-    (client as any).scheduleReconnect();
+    nextAttempt();
     expect((client as any).currentUrl).toBe('wss://primary.example.com/');
     expect((client as any).urlIndex).toBe(0);
+    client.disconnect();
+  });
+
+  it('should ignore a failover URL that repeats the primary', () => {
+    const client = new ShipClient({
+      url: 'ws://10.10.10.181:8080',
+      failoverUrls: [
+        'wss://ship.testnet.libre.pdx.cryptobloks.io/',
+        'ws://10.10.10.181:8080/',
+        'wss://ship.testnet.libre.pdx.cryptobloks.io',
+      ],
+    });
+
+    expect((client as any).urls).toEqual([
+      'ws://10.10.10.181:8080',
+      'wss://ship.testnet.libre.pdx.cryptobloks.io/',
+    ]);
   });
 
   it('should not cycle URLs when only primary is configured', () => {

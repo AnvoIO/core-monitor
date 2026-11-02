@@ -151,6 +151,7 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
 
   const ship = new ShipClient({
     url: shipUrl,
+    access: chainConfig.shipAccess,
     startBlock,
     endBlock: endBlock > 0 ? endBlock : 0xffffffff,
     fetchBlock: true,
