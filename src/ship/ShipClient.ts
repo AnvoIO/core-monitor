@@ -1,8 +1,10 @@
 import WebSocket from 'ws';
 import { Serializer, ABI } from '@wharfkit/antelope';
 import { EventEmitter } from 'events';
+import { BlockList, isIP } from 'net';
 import { logger } from '../utils/logger.js';
 import type {
+  ShipAccessCredentials,
   ShipClientOptions,
   ShipClientState,
   ShipResult,
@@ -288,14 +290,58 @@ const _SHIP_ABI_REFERENCE = {
 
 const log = logger.child({ module: 'ShipClient' });
 
+/** Most recent delivered blocks sent as have_positions on reconnect, for fork detection. */
+const MAX_HAVE_POSITIONS = 512;
+/** Primary may lag the stream by this many blocks and still be considered healthy for failback. */
+const FAILBACK_HEAD_TOLERANCE = 20;
+const PROBE_TIMEOUT_MS = 15000;
+
+const privateAddresses = new BlockList();
+privateAddresses.addSubnet('10.0.0.0', 8, 'ipv4');
+privateAddresses.addSubnet('100.64.0.0', 10, 'ipv4');
+privateAddresses.addSubnet('127.0.0.0', 8, 'ipv4');
+privateAddresses.addSubnet('169.254.0.0', 16, 'ipv4');
+privateAddresses.addSubnet('172.16.0.0', 12, 'ipv4');
+privateAddresses.addSubnet('192.168.0.0', 16, 'ipv4');
+privateAddresses.addAddress('::1', 'ipv6');
+privateAddresses.addSubnet('fc00::', 7, 'ipv6');
+privateAddresses.addSubnet('fe80::', 10, 'ipv6');
+
+/**
+ * True only for wss:// URLs on public hosts. Access credentials are sent to these
+ * and nothing else: plain ws://, private/loopback addresses and internal names never get them.
+ */
+export function isPublicWssUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'wss:') return false;
+
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const family = isIP(host);
+  if (family !== 0) {
+    return !privateAddresses.check(host, family === 6 ? 'ipv6' : 'ipv4');
+  }
+  if (!host.includes('.')) return false;
+  return !/\.(localhost|local|internal|lan)$/.test(host);
+}
+
 export class ShipClient extends EventEmitter {
   private ws: WebSocket | null = null;
   private abi: ABI | null = null;
-  private options: Required<ShipClientOptions>;
+  private options: Required<Omit<ShipClientOptions, 'access'>>;
+  private access: ShipAccessCredentials | null;
   private state: ShipClientState = 'disconnected';
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private stallTimer: NodeJS.Timeout | null = null;
+  private failbackTimer: NodeJS.Timeout | null = null;
+  private probeWs: WebSocket | null = null;
+  /** Blocks delivered on the current chain, oldest first. Drives resume and have_positions. */
+  private deliveredPositions: Array<{ block_num: number; block_id: string }> = [];
   private urls: string[];
   private urlIndex = 0;
   private currentUrl: string;
@@ -315,8 +361,18 @@ export class ShipClient extends EventEmitter {
       maxReconnectAttempts: options.maxReconnectAttempts || 100,
       reconnectDelayMs: options.reconnectDelayMs || 3000,
       stallTimeoutMs: options.stallTimeoutMs || 30000,
+      handshakeTimeoutMs: options.handshakeTimeoutMs || 10000,
+      failbackIntervalMs: options.failbackIntervalMs || 60000,
     };
-    this.urls = [this.options.url, ...this.options.failoverUrls];
+    this.access = options.access ?? null;
+    // Dedupe so a failover entry equal to the primary can't consume a rotation slot.
+    const seen = new Set<string>();
+    this.urls = [this.options.url, ...this.options.failoverUrls].filter((url) => {
+      const key = url.replace(/\/+$/, '');
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     this.currentUrl = this.urls[0];
   }
 
@@ -346,13 +402,36 @@ export class ShipClient extends EventEmitter {
 
   private forceReconnect(): void {
     this.clearStallTimer();
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.close();
-      this.ws = null;
-    }
+    this.clearFailback();
+    this.dropSocket();
     this.state = 'disconnected';
     this.scheduleReconnect();
+  }
+
+  /** Close the current socket without letting it drive further state changes. */
+  private dropSocket(): void {
+    if (!this.ws) return;
+    this.ws.removeAllListeners();
+    // close() on a socket still handshaking emits 'error'; unhandled, that would crash.
+    this.ws.on('error', () => {});
+    this.ws.close();
+    this.ws = null;
+  }
+
+  private socketOptions(url: string): WebSocket.ClientOptions {
+    const options: WebSocket.ClientOptions = {
+      perMessageDeflate: false,
+      handshakeTimeout: this.options.handshakeTimeoutMs,
+      // A redirect must not carry access headers to another host.
+      followRedirects: false,
+    };
+    if (this.access && isPublicWssUrl(url)) {
+      options.headers = {
+        'CF-Access-Client-Id': this.access.clientId,
+        'CF-Access-Client-Secret': this.access.clientSecret,
+      };
+    }
+    return options;
   }
 
   async connect(): Promise<void> {
@@ -361,11 +440,12 @@ export class ShipClient extends EventEmitter {
     this.receivedAbi = false;
 
     return new Promise((resolve, reject) => {
-      log.info({ url: this.currentUrl }, 'Connecting to SHiP');
+      log.info(
+        { url: this.currentUrl, accessHeaders: !!this.access && isPublicWssUrl(this.currentUrl) },
+        'Connecting to SHiP'
+      );
 
-      this.ws = new WebSocket(this.currentUrl, {
-        perMessageDeflate: false,
-      });
+      this.ws = new WebSocket(this.currentUrl, this.socketOptions(this.currentUrl));
 
       this.ws.binaryType = 'arraybuffer';
 
@@ -388,6 +468,7 @@ export class ShipClient extends EventEmitter {
       this.ws.on('close', (code, reason) => {
         log.warn({ code, reason: reason.toString() }, 'SHiP WebSocket closed');
         this.clearStallTimer();
+        this.clearFailback();
         this.state = 'disconnected';
         this.ws = null;
         this.scheduleReconnect();
@@ -447,15 +528,12 @@ export class ShipClient extends EventEmitter {
 
   disconnect(): void {
     this.clearStallTimer();
+    this.clearFailback();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.ws) {
-      this.ws.removeAllListeners();
-      this.ws.close();
-      this.ws = null;
-    }
+    this.dropSocket();
     this.state = 'disconnected';
     log.info('SHiP client disconnected');
   }
@@ -536,6 +614,13 @@ export class ShipClient extends EventEmitter {
 
     const blockNum = Number(result.this_block.block_num);
     const blockId = String(result.this_block.block_id);
+
+    // After a reconnect SHiP can re-send blocks we already delivered (the node was behind
+    // our have_positions). Same id means same block; passing it on would look like a fork.
+    if (this.isAlreadyDelivered(blockNum, blockId)) {
+      this.ack();
+      return;
+    }
 
     let block: ShipBlockHeader | null = null;
     let traces: ShipTransactionTrace[] = [];
@@ -711,8 +796,34 @@ export class ShipClient extends EventEmitter {
       deltas,
     };
 
+    this.recordDelivered(blockNum, blockId);
     this.emit('block', shipResult);
     this.ack();
+  }
+
+  private isAlreadyDelivered(blockNum: number, blockId: string): boolean {
+    for (let i = this.deliveredPositions.length - 1; i >= 0; i--) {
+      const position = this.deliveredPositions[i];
+      if (position.block_num === blockNum) return position.block_id === blockId;
+      if (position.block_num < blockNum) return false;
+    }
+    return false;
+  }
+
+  /** Reconnects resume after this block rather than from the block we originally started at. */
+  private recordDelivered(blockNum: number, blockId: string): void {
+    // A lower or equal number with a new id is a fork: drop the abandoned branch.
+    while (
+      this.deliveredPositions.length > 0 &&
+      this.deliveredPositions[this.deliveredPositions.length - 1].block_num >= blockNum
+    ) {
+      this.deliveredPositions.pop();
+    }
+    this.deliveredPositions.push({ block_num: blockNum, block_id: blockId });
+    if (this.deliveredPositions.length > MAX_HAVE_POSITIONS) {
+      this.deliveredPositions.shift();
+    }
+    this.options.startBlock = blockNum + 1;
   }
 
   private requestBlocks(): void {
@@ -724,6 +835,8 @@ export class ShipClient extends EventEmitter {
     log.info(
       {
         startBlock: startBlock === 0 ? 'HEAD' : startBlock,
+        url: this.currentUrl,
+        havePositions: this.deliveredPositions.length,
         fetchBlock: this.options.fetchBlock,
         fetchTraces: this.options.fetchTraces,
         fetchDeltas: this.options.fetchDeltas,
@@ -739,7 +852,7 @@ export class ShipClient extends EventEmitter {
           start_block_num: startBlock,
           end_block_num: this.options.endBlock,
           max_messages_in_flight: this.maxInFlight,
-          have_positions: [],
+          have_positions: this.deliveredPositions,
           irreversible_only: false,
           fetch_block: this.options.fetchBlock,
           fetch_traces: this.options.fetchTraces,
@@ -750,6 +863,7 @@ export class ShipClient extends EventEmitter {
     });
 
     this.ws.send(request.array);
+    this.armFailback();
   }
 
   private ack(count: number = 1): void {
@@ -771,7 +885,113 @@ export class ShipClient extends EventEmitter {
     this.options.startBlock = blockNum;
   }
 
+  private armFailback(): void {
+    this.clearFailbackTimer();
+    if (this.urlIndex === 0) return;
+    this.failbackTimer = setTimeout(() => {
+      this.failbackTimer = null;
+      void this.checkPrimary();
+    }, this.options.failbackIntervalMs);
+    this.failbackTimer.unref();
+  }
+
+  private clearFailbackTimer(): void {
+    if (this.failbackTimer) {
+      clearTimeout(this.failbackTimer);
+      this.failbackTimer = null;
+    }
+  }
+
+  private clearFailback(): void {
+    this.clearFailbackTimer();
+    this.closeProbe();
+  }
+
+  private closeProbe(): void {
+    if (!this.probeWs) return;
+    this.probeWs.removeAllListeners();
+    this.probeWs.on('error', () => {});
+    this.probeWs.terminate();
+    this.probeWs = null;
+  }
+
+  /** While on a failover endpoint, return to the primary once it has caught up with the stream. */
+  private async checkPrimary(): Promise<void> {
+    const head = await this.probeHead(this.urls[0]);
+    if (this.state !== 'streaming' || this.urlIndex === 0) return;
+
+    const required = this.options.startBlock - 1 - FAILBACK_HEAD_TOLERANCE;
+    if (head === null || head < required) {
+      log.debug({ url: this.urls[0], head, required }, 'Primary SHiP not ready for failback');
+      this.armFailback();
+      return;
+    }
+
+    log.info({ url: this.urls[0], head }, 'Primary SHiP healthy, returning from failover');
+    this.clearStallTimer();
+    this.clearFailback();
+    this.dropSocket();
+    this.state = 'disconnected';
+    this.urlIndex = 0;
+    this.currentUrl = this.urls[0];
+    this.reconnectAttempts = 0;
+    this.connect().catch((err) => {
+      log.error({ err }, 'Reconnect to primary failed');
+      this.scheduleReconnect();
+    });
+  }
+
+  /** Read head block from a SHiP endpoint on a throwaway socket. Null if it isn't serving. */
+  private probeHead(url: string): Promise<number | null> {
+    return new Promise((resolve) => {
+      this.closeProbe();
+      const socket = new WebSocket(url, this.socketOptions(url));
+      socket.binaryType = 'arraybuffer';
+      this.probeWs = socket;
+
+      let abi: ABI | null = null;
+      const finish = (head: number | null) => {
+        clearTimeout(timeout);
+        if (this.probeWs === socket) this.closeProbe();
+        resolve(head);
+      };
+      const timeout = setTimeout(() => finish(null), PROBE_TIMEOUT_MS);
+      timeout.unref();
+
+      socket.on('error', () => finish(null));
+      socket.on('close', () => finish(null));
+      socket.on('message', (data: ArrayBuffer | Buffer) => {
+        try {
+          if (!abi) {
+            abi = ABI.from(JSON.parse(new TextDecoder().decode(new Uint8Array(data))));
+            socket.send(
+              Serializer.encode({
+                type: 'request',
+                object: ['get_status_request_v0', {}],
+                abi,
+              }).array
+            );
+            return;
+          }
+          const [type, status] = Serializer.decode({
+            data: new Uint8Array(data),
+            type: 'result',
+            abi,
+          }) as [string, any];
+          finish(type === 'get_status_result_v0' ? Number(status.head.block_num) : null);
+        } catch (err) {
+          log.debug({ err, url }, 'SHiP probe failed');
+          finish(null);
+        }
+      });
+    });
+  }
+
   private scheduleReconnect(): void {
+    // A failed reconnect reports through both 'close' and the connect() rejection. Without this
+    // guard the URL rotates twice per failure, which with two URLs retries the same one forever.
+    if (this.reconnectTimer) return;
+
     if (this.reconnectAttempts >= this.options.maxReconnectAttempts) {
       log.error('Max reconnection attempts reached');
       this.emit('max_reconnects');
@@ -794,6 +1014,7 @@ export class ShipClient extends EventEmitter {
     log.info({ attempt: this.reconnectAttempts, delayMs: delay }, 'Scheduling reconnect');
 
     this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
       try {
         await this.connect();
       } catch (err) {

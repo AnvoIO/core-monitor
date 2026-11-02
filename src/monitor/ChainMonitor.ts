@@ -50,6 +50,7 @@ export class ChainMonitor extends EventEmitter {
     this.ship = new ShipClient({
       url: this.config.shipUrl,
       failoverUrls: this.config.shipFailoverUrls,
+      access: this.config.shipAccess,
       startBlock,
       fetchBlock: true,
       fetchTraces: true,
