@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { logger } from './utils/logger.js';
 import type { ShipAccessCredentials } from './ship/types.js';
+import { ANTELOPE_EPOCH_MS } from './utils/chainTime.js';
 
 dotenv.config();
 
@@ -17,6 +18,10 @@ export interface ChainConfig {
   scheduleSize: number;
   blocksPerBp: number;
   blockTimeMs: number;
+  /** Epoch of block timestamps in Unix ms: 2000-01-01 for Antelope, 2025-01-01 for Wire. */
+  blockTimestampEpochMs: number;
+  /** Account that owns the system contract: eosio on Antelope, sysio on Wire. */
+  systemAccount: string;
   telegram?: {
     statusChatId: string;
     alertChatId: string;
@@ -93,6 +98,11 @@ function parseChainConfig(id: string): ChainConfig {
     scheduleSize: parseInt(optionalEnv(`${prefix}_SCHEDULE_SIZE`, '21'), 10),
     blocksPerBp: parseInt(optionalEnv(`${prefix}_BLOCKS_PER_BP`, '12'), 10),
     blockTimeMs: parseInt(optionalEnv(`${prefix}_BLOCK_TIME_MS`, '500'), 10),
+    blockTimestampEpochMs: parseInt(
+      optionalEnv(`${prefix}_BLOCK_TIMESTAMP_EPOCH_MS`, String(ANTELOPE_EPOCH_MS)),
+      10
+    ),
+    systemAccount: optionalEnv(`${prefix}_SYSTEM_ACCOUNT`, 'eosio'),
     telegram: optionalEnv(`TELEGRAM_${prefix}_STATUS_CHAT_ID`)
       ? {
           statusChatId: requireEnv(`TELEGRAM_${prefix}_STATUS_CHAT_ID`),

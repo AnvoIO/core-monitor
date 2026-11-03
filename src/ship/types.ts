@@ -25,6 +25,22 @@ export interface ShipBlockHeader {
   };
   /** Header extensions — contains producer_schedule_change_extension (ID 1) when WTMSIG is active */
   header_extensions: Array<{ type: number; data: any }>;
+  /**
+   * Savanna header fields. Present only on chains whose SHiP ABI has a Savanna block_header;
+   * schedule_version is then meaningless (-1) and the schedule must be tracked from these.
+   */
+  savanna?: SavannaHeaderFields;
+}
+
+export interface SavannaHeaderFields {
+  slot: number;
+  qcClaim: { blockNum: number; isStrong: boolean };
+  proposerDiff: {
+    version: number;
+    proposalSlot: number;
+    removeIndexes: number[];
+    insertIndexes: Array<{ index: number; value: { producer_name: string; block_signing_key: string } }>;
+  } | null;
 }
 
 export interface ShipBlock {
@@ -103,4 +119,6 @@ export interface ShipClientOptions {
   /** While on a failover endpoint, check the primary this often (default 60000) */
   failbackIntervalMs?: number;
   access?: ShipAccessCredentials;
+  /** Epoch of the chain's block timestamps, in Unix ms (default 2000-01-01; Wire uses 2025-01-01) */
+  blockTimestampEpochMs?: number;
 }

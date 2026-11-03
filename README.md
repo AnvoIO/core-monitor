@@ -129,6 +129,32 @@ All configuration is via environment variables (see `.env.example`):
 | `{CHAIN}_API_URL` | Chain RPC endpoint | required |
 | `{CHAIN}_HYPERION_URL` | Hyperion v2 endpoint | optional |
 | `{CHAIN}_CHAIN_ID` | Expected chain ID | required |
+| `{CHAIN}_SCHEDULE_SIZE` | Producers per schedule; rounds are `SCHEDULE_SIZE × BLOCKS_PER_BP` slots | `21` |
+| `{CHAIN}_BLOCK_TIMESTAMP_EPOCH_MS` | Epoch of block timestamps in Unix ms | `946684800000` (2000-01-01) |
+| `{CHAIN}_SYSTEM_ACCOUNT` | System contract account, for producer registration events | `eosio` |
+
+### Wire (Savanna chains)
+
+The writer follows Wire testnet as well as Libre. Set these for a Wire chain:
+
+```
+CHAINS=libre_mainnet,libre_testnet,wire_testnet
+WIRE_TESTNET_SHIP_URL=wss://ship.testnet.wire.pdx.cryptobloks.io
+WIRE_TESTNET_SHIP_FAILOVER_URL=wss://ship.testnet.wire.iad.cryptobloks.io
+WIRE_TESTNET_API_URL=https://api.testnet.wire.pdx.cryptobloks.io
+WIRE_TESTNET_CHAIN_ID=9ccd94e823fda51363bd4265ad618a909c4985c445078c79f8d030fe9697b71d
+WIRE_TESTNET_BLOCK_TIMESTAMP_EPOCH_MS=1735689600000
+WIRE_TESTNET_SYSTEM_ACCOUNT=sysio
+```
+
+Wire differs from Libre in ways the writer handles automatically when the SHiP ABI has a Savanna `block_header`:
+
+- **Schedule changes.** Headers carry no `schedule_version`. A new schedule arrives as a proposer policy diff, and the writer applies Wire v1.0.0's promotion rules: proposed → pending at the next 12-slot producer turn → active once the proposing block is final (two-chain finality from each header's QC claim). This was checked against Wire testnet history: across 138,634 blocks in two replays, including the change to schedule 47, every block's producer matched the tracked schedule.
+- **Timestamps.** Block slots count from 2025-01-01, so `BLOCK_TIMESTAMP_EPOCH_MS` must be set. Stored timestamps are real UTC times.
+- **Decoding.** Only the block header is decoded; the full block's QC uses a `bitset` type the ABI decoder lacks. Transaction traces with signature types the decoder doesn't know are skipped with a warning (they're only read for producer registration events).
+- **Round numbers.** There's no Hyperion lookup for when the starting schedule became active, so rounds are numbered from when the writer first sees the chain, and from each schedule change after that.
+
+The catchup writer doesn't support Savanna chains.
 
 ### Database
 

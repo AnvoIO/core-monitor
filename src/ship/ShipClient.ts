@@ -3,6 +3,7 @@ import { Serializer, ABI } from '@wharfkit/antelope';
 import { EventEmitter } from 'events';
 import { BlockList, isIP } from 'net';
 import { logger } from '../utils/logger.js';
+import { ANTELOPE_EPOCH_MS } from '../utils/chainTime.js';
 import type {
   ShipAccessCredentials,
   ShipClientOptions,
@@ -295,6 +296,23 @@ const MAX_HAVE_POSITIONS = 512;
 /** Primary may lag the stream by this many blocks and still be considered healthy for failback. */
 const FAILBACK_HEAD_TOLERANCE = 20;
 const PROBE_TIMEOUT_MS = 15000;
+const BLOCK_INTERVAL_MS = 500;
+
+/** True if the SHiP ABI's block_header is the Savanna layout (proposer policy diffs, QC claims). */
+export function isSavannaAbi(abiJson: { structs?: Array<{ name: string; fields?: Array<{ name: string }> }> }): boolean {
+  const header = abiJson.structs?.find((s) => s.name === 'block_header');
+  return !!header?.fields?.some((f) => f.name === 'new_proposer_policy_diff');
+}
+
+/** Block timestamp as UTC ISO without zone suffix (the format used everywhere else), from its slot. */
+export function slotToTimestamp(slot: number, epochMs: number): string {
+  return new Date(epochMs + slot * BLOCK_INTERVAL_MS).toISOString().replace(/Z$/, '');
+}
+
+function signingKey(authority: any): string {
+  const key = authority?.[1]?.keys?.[0]?.key ?? authority?.keys?.[0]?.key;
+  return key ? String(key) : 'unknown';
+}
 
 const privateAddresses = new BlockList();
 privateAddresses.addSubnet('10.0.0.0', 8, 'ipv4');
@@ -346,6 +364,8 @@ export class ShipClient extends EventEmitter {
   private urlIndex = 0;
   private currentUrl: string;
   private receivedAbi = false;
+  /** The SHiP ABI uses a Savanna block_header (no schedule_version; proposer policy diffs). */
+  private savannaHeaders = false;
   private readonly maxInFlight = 10;
 
   constructor(options: ShipClientOptions) {
@@ -362,6 +382,7 @@ export class ShipClient extends EventEmitter {
       reconnectDelayMs: options.reconnectDelayMs || 3000,
       stallTimeoutMs: options.stallTimeoutMs || 30000,
       handshakeTimeoutMs: options.handshakeTimeoutMs || 10000,
+      blockTimestampEpochMs: options.blockTimestampEpochMs ?? ANTELOPE_EPOCH_MS,
       failbackIntervalMs: options.failbackIntervalMs || 60000,
     };
     this.access = options.access ?? null;
@@ -509,11 +530,12 @@ export class ShipClient extends EventEmitter {
 
       const abiJson = JSON.parse(abiText);
       this.abi = ABI.from(abiJson);
+      this.savannaHeaders = isSavannaAbi(abiJson);
       this.receivedAbi = true;
       this.state = 'connected';
 
       log.info(
-        { version: abiJson.version },
+        { version: abiJson.version, savannaHeaders: this.savannaHeaders },
         'Received SHiP ABI, sending status request'
       );
 
@@ -638,7 +660,13 @@ export class ShipClient extends EventEmitter {
     let deltas: ShipTableDelta[] = [];
 
     // Decode block
-    if (result.block) {
+    if (result.block && this.savannaHeaders) {
+      try {
+        block = this.decodeSavannaHeader(result.block);
+      } catch (err) {
+        log.error({ err, blockNum }, 'Failed to decode block');
+      }
+    } else if (result.block) {
       try {
         // result.block is a wharfkit Bytes object with an .array property
         const blockBytes = result.block.array ?? (result.block instanceof Uint8Array
@@ -759,7 +787,14 @@ export class ShipClient extends EventEmitter {
           }),
         }));
       } catch (err) {
-        log.error({ err, blockNum }, 'Failed to decode traces');
+        // Wire allows signature types the decoder doesn't know. Traces are only read for
+        // producer registration actions, so losing one block's traces is a warning, not an error.
+        const message = (err as Error)?.message ?? '';
+        if (message.includes('Unknown curve type')) {
+          log.warn({ blockNum }, 'Skipped traces: a transaction uses an unsupported signature type');
+        } else {
+          log.error({ err, blockNum }, 'Failed to decode traces');
+        }
       }
     }
 
@@ -816,6 +851,50 @@ export class ShipClient extends EventEmitter {
     this.recordDelivered(blockNum, blockId);
     this.emit('block', shipResult);
     this.ack();
+  }
+
+  /**
+   * Decode only the header of a Savanna block. The full signed_block carries a QC whose
+   * `bitset` type the ABI decoder doesn't support, and nothing past the header is needed.
+   */
+  private decodeSavannaHeader(raw: any): ShipBlockHeader {
+    const bytes = raw.array ?? (raw instanceof Uint8Array ? raw : new Uint8Array(raw));
+    const h = Serializer.decode({ data: bytes, type: 'block_header', abi: this.abi! }) as any;
+    const epochMs = this.options.blockTimestampEpochMs;
+    const slot = Number(h.timestamp.value);
+    const diff = h.new_proposer_policy_diff;
+
+    return {
+      timestamp: slotToTimestamp(slot, epochMs),
+      producer: String(h.producer),
+      confirmed: 0,
+      previous: String(h.previous),
+      transaction_mroot: String(h.transaction_mroot),
+      action_mroot: '',
+      schedule_version: -1,
+      header_extensions: (h.header_extensions || []).map((e: any) => ({
+        type: Number(e.type ?? e[0]),
+        data: e.data ?? e[1],
+      })),
+      savanna: {
+        slot,
+        qcClaim: { blockNum: Number(h.qc_claim.block_num), isStrong: Boolean(h.qc_claim.is_strong_qc) },
+        proposerDiff: diff
+          ? {
+              version: Number(diff.version),
+              proposalSlot: Number(diff.proposal_time.value),
+              removeIndexes: (diff.remove_indexes || []).map(Number),
+              insertIndexes: (diff.insert_indexes || []).map((p: any) => ({
+                index: Number(p.index),
+                value: {
+                  producer_name: String(p.value.producer_name),
+                  block_signing_key: signingKey(p.value.authority),
+                },
+              })),
+            }
+          : null,
+      },
+    };
   }
 
   private isAlreadyDelivered(blockNum: number, blockId: string): boolean {
