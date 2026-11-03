@@ -107,6 +107,6 @@ describe('SlackAlert', () => {
         body: 'Body',
         timestamp: '2026-03-30T00:00:00.000',
       })
-    ).resolves.toBeUndefined();
+    ).resolves.toBe('failed');
   });
 });

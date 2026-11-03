@@ -102,7 +102,7 @@ CATCHUP_SHIP_URL=ws://your-history-node:8088
 docker compose --profile catchup up -d catchup
 ```
 
-The catchup writer automatically detects where the live writer started and stops there — no overlap, no manual coordination. On restart, it resumes from the last processed block rather than starting over.
+The catchup writer automatically detects where the live writer started (the first block of its earliest round) and stops there — no overlap, no manual coordination. When it finishes it re-derives daily stats and outage events for everything before that point, since its batch inserts skip them. It saves that block as `catchup_end_block`, so a restarted run stops in the same place, and resumes from the last processed block rather than starting over. Set `CATCHUP_SHIP_URL` per chain with `{CHAIN}_CATCHUP_SHIP_URL`; Savanna chains need extra care (see [Wire](#wire-savanna-chains)).
 
 ### Development
 
@@ -129,6 +129,41 @@ All configuration is via environment variables (see `.env.example`):
 | `{CHAIN}_API_URL` | Chain RPC endpoint | required |
 | `{CHAIN}_HYPERION_URL` | Hyperion v2 endpoint | optional |
 | `{CHAIN}_CHAIN_ID` | Expected chain ID | required |
+| `{CHAIN}_SCHEDULE_SIZE` | Producers per round until the active schedule is known; after that a round is one pass through the active schedule (producers × `BLOCKS_PER_BP` slots), however many producers it has. Also sets the dashboard's round timing | `21` |
+| `{CHAIN}_BLOCK_TIMESTAMP_EPOCH_MS` | Epoch of block timestamps in Unix ms | `946684800000` (2000-01-01) |
+| `{CHAIN}_SYSTEM_ACCOUNT` | System contract account, for producer registration events | `eosio` |
+
+### Wire (Savanna chains)
+
+The writer follows Wire testnet as well as Libre. Set these for a Wire chain:
+
+```
+CHAINS=libre_mainnet,libre_testnet,wire_testnet
+WIRE_TESTNET_SHIP_URL=wss://ship.testnet.wire.pdx.cryptobloks.io
+WIRE_TESTNET_SHIP_FAILOVER_URL=wss://ship.testnet.wire.iad.cryptobloks.io
+WIRE_TESTNET_API_URL=https://api.testnet.wire.pdx.cryptobloks.io
+WIRE_TESTNET_CHAIN_ID=9ccd94e823fda51363bd4265ad618a909c4985c445078c79f8d030fe9697b71d
+WIRE_TESTNET_BLOCK_TIMESTAMP_EPOCH_MS=1735689600000
+WIRE_TESTNET_SYSTEM_ACCOUNT=sysio
+```
+
+Wire differs from Libre in ways the writer handles automatically when the SHiP ABI has a Savanna `block_header`:
+
+- **Schedule changes.** Headers carry no `schedule_version`. A new schedule arrives as a proposer policy diff, and the writer applies Wire v1.0.0's promotion rules: proposed → pending at the next 12-slot producer turn → active once the proposing block is final (two-chain finality from each header's QC claim). This was checked against Wire testnet history: across 138,634 blocks in two replays, including the change to schedule 47, every block's producer matched the tracked schedule.
+- **Timestamps.** Block slots count from 2025-01-01, so `BLOCK_TIMESTAMP_EPOCH_MS` must be set. Stored timestamps are real UTC times.
+- **Decoding.** Only the block header is decoded; the full block's QC uses a `bitset` type the ABI decoder lacks. Transaction traces with signature types the decoder doesn't know are skipped with a warning (they're only read for producer registration events).
+- **Round numbers.** There's no Hyperion lookup for when the starting schedule became active, so rounds are numbered from when the writer first sees the chain, and from each schedule change after that.
+
+**Backfilling a Savanna chain.** The catchup writer must start at block 1 (`CATCHUP_START_BLOCK=1`, the default): no earlier schedule is known, so it starts from the genesis producer and applies every proposer policy diff from there. That also gives every schedule its real activation point. The live writer, by contrast, numbers rounds of its starting schedule from when it first saw the chain. If the live writer was already running, those round numbers won't match the catchup's for the same schedule version and the catchup's rows for clashing numbers are dropped as duplicates. So before starting the catchup, either backfill first and start the live writer afterwards, or stop the live writer and shift its rounds of that schedule onto the activation point the catchup will find.
+
+Run the catchup for the Savanna chain only, e.g.:
+
+```bash
+docker compose --profile catchup run -d --name core-monitor-catchup-wire \
+  -e CHAINS=wire_testnet \
+  -e WIRE_TESTNET_CATCHUP_SHIP_URL=wss://ship.testnet.wire.pdx.cryptobloks.io \
+  catchup
+```
 
 ### Database
 
@@ -155,6 +190,34 @@ All configuration is via environment variables (see `.env.example`):
 | `API_PORT` | Dashboard/API listen port | `3000` |
 | `API_CORS_ORIGIN` | CORS allowed origin | `*` |
 | `MONITOR_PORT` | Host port mapping for Docker | `3100` |
+
+### Metrics (Writer)
+
+The writer serves Prometheus metrics at `GET /metrics` on port 9464. Docker Compose publishes it on the host's loopback only, at `127.0.0.1:${METRICS_HOST_PORT}`, for a scraper on the same host.
+
+| Variable | Description | Default |
+|---|---|---|
+| `METRICS_ENABLED` | Serve `/metrics` from the writer | `true` |
+| `METRICS_HOST_PORT` | Host loopback port mapping for Docker | `9464` |
+
+Every series carries `chain` and `network` labels (alert metrics carry `channel` instead). All names start with `core_monitor_`:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `blocks_produced_total`, `blocks_missed_total` | counter | Blocks per `producer`, counted when each round completes |
+| `rounds_missed_total` | counter | Rounds in which the `producer` produced no blocks |
+| `rounds_total` | counter | Rounds evaluated |
+| `forks_total` | counter | Forks detected |
+| `head_block`, `lib_block`, `processed_block` | gauge | Head and last irreversible block from SHiP; last block the writer processed |
+| `blocks_behind` | gauge | `head_block` minus `processed_block` |
+| `last_block_timestamp_seconds` | gauge | Block time of the last processed block (`time() - x` is the lag) |
+| `up` | gauge | 1 while the writer runs the monitor for the chain |
+| `ship_connected`, `ship_failover_active` | gauge | SHiP socket open; on a failover endpoint |
+| `ship_endpoint_info` | gauge | Current endpoint as `role` (`primary`/`failover`) and `host` (host:port only) |
+| `ship_disconnects_total`, `ship_reconnect_attempts_total`, `ship_failovers_total` | counter | SHiP connection events |
+| `alerts_sent_total`, `alert_send_failures_total` | counter | Alert deliveries per `channel` (and `severity`); failed alerts are not retried |
+
+Counters start at 0 for every producer in the active schedule, every chain and every alert channel, so the first increment after a restart shows up in `increase()`. Node.js process metrics are included with the same prefix.
 
 ### Catchup Writer
 

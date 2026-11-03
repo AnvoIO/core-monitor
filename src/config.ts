@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import { logger } from './utils/logger.js';
 import type { ShipAccessCredentials } from './ship/types.js';
+import { ANTELOPE_EPOCH_MS } from './utils/chainTime.js';
 
 dotenv.config();
 
@@ -17,6 +18,10 @@ export interface ChainConfig {
   scheduleSize: number;
   blocksPerBp: number;
   blockTimeMs: number;
+  /** Epoch of block timestamps in Unix ms: 2000-01-01 for Antelope, 2025-01-01 for Wire. */
+  blockTimestampEpochMs: number;
+  /** Account that owns the system contract: eosio on Antelope, sysio on Wire. */
+  systemAccount: string;
   telegram?: {
     statusChatId: string;
     alertChatId: string;
@@ -37,6 +42,11 @@ export interface AppConfig {
     port: number;
     host: string;
     corsOrigin: string;
+  };
+  metrics: {
+    enabled: boolean;
+    port: number;
+    host: string;
   };
   postgresUrl: string;
   retentionDays: number;
@@ -88,6 +98,11 @@ function parseChainConfig(id: string): ChainConfig {
     scheduleSize: parseInt(optionalEnv(`${prefix}_SCHEDULE_SIZE`, '21'), 10),
     blocksPerBp: parseInt(optionalEnv(`${prefix}_BLOCKS_PER_BP`, '12'), 10),
     blockTimeMs: parseInt(optionalEnv(`${prefix}_BLOCK_TIME_MS`, '500'), 10),
+    blockTimestampEpochMs: parseInt(
+      optionalEnv(`${prefix}_BLOCK_TIMESTAMP_EPOCH_MS`, String(ANTELOPE_EPOCH_MS)),
+      10
+    ),
+    systemAccount: optionalEnv(`${prefix}_SYSTEM_ACCOUNT`, 'eosio'),
     telegram: optionalEnv(`TELEGRAM_${prefix}_STATUS_CHAT_ID`)
       ? {
           statusChatId: requireEnv(`TELEGRAM_${prefix}_STATUS_CHAT_ID`),
@@ -114,6 +129,11 @@ export function loadConfig(): AppConfig {
       port: parseInt(optionalEnv('API_PORT', '3000'), 10),
       host: optionalEnv('API_HOST', '0.0.0.0'),
       corsOrigin: optionalEnv('API_CORS_ORIGIN', '*'),
+    },
+    metrics: {
+      enabled: optionalEnv('METRICS_ENABLED', 'true').toLowerCase() === 'true',
+      port: parseInt(optionalEnv('METRICS_PORT', '9464'), 10),
+      host: optionalEnv('METRICS_HOST', '0.0.0.0'),
     },
     postgresUrl: requireEnv('POSTGRES_URL'),
     retentionDays: parseInt(optionalEnv('RETENTION_DAYS', '548'), 10),

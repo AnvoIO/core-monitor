@@ -14,7 +14,9 @@ import { AlertManager } from './alerting/AlertManager.js';
 import { TelegramAlert } from './alerting/TelegramAlert.js';
 import { SlackAlert } from './alerting/SlackAlert.js';
 import { logger } from './utils/logger.js';
+import { startMetricsServer } from './metrics/metrics.js';
 import cron from 'node-cron';
+import type { Server } from 'node:http';
 
 const log = logger.child({ module: 'writer' });
 
@@ -26,6 +28,18 @@ async function main(): Promise<void> {
 
   const db = new Database(config.postgresUrl);
   await db.init();
+
+  // Prometheus endpoint. A failure here is logged, not fatal: monitoring must not stop the writer.
+  let metricsServer: Server | null = null;
+  if (config.metrics.enabled) {
+    try {
+      metricsServer = await startMetricsServer(config.metrics.port, config.metrics.host);
+    } catch (err) {
+      log.error({ err, port: config.metrics.port }, 'Failed to start metrics endpoint');
+    }
+  } else {
+    log.info('Metrics endpoint disabled');
+  }
 
   // Alerting
   const alertManager = new AlertManager();
@@ -137,6 +151,7 @@ async function main(): Promise<void> {
     for (const monitor of monitors) {
       monitor.stop();
     }
+    metricsServer?.close();
     await db.close();
     process.exit(0);
   };

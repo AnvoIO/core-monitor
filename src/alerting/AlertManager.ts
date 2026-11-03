@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import type { AlertChannel, AlertMessage, AlertSeverity } from './types.js';
+import { alertsSent, alertSendFailures, initAlertChannelSeries } from '../metrics/metrics.js';
 
 const log = logger.child({ module: 'AlertManager' });
 
@@ -33,6 +34,7 @@ export class AlertManager {
 
   addChannel(channel: AlertChannel): void {
     this.channels.push(channel);
+    initAlertChannelSeries(channel.name);
     log.info({ channel: channel.name }, 'Alert channel registered');
   }
 
@@ -63,9 +65,16 @@ export class AlertManager {
     );
 
     const sends = this.channels.map((ch) =>
-      ch.send(enriched).catch((err) => {
-        log.error({ err, channel: ch.name }, 'Alert channel send failed');
-      })
+      ch
+        .send(enriched)
+        .catch((err) => {
+          log.error({ err, channel: ch.name }, 'Alert channel send failed');
+          return 'failed' as const;
+        })
+        .then((result) => {
+          if (result === 'sent') alertsSent.inc({ channel: ch.name, severity: message.severity });
+          else if (result === 'failed') alertSendFailures.inc({ channel: ch.name });
+        })
     );
 
     await Promise.all(sends);

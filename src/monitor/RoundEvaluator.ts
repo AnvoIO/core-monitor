@@ -2,11 +2,10 @@ import { logger } from '../utils/logger.js';
 import { Database } from '../store/Database.js';
 import { ScheduleTracker } from './ScheduleTracker.js';
 import type { ChainConfig } from '../config.js';
+import { ANTELOPE_EPOCH_MS } from '../utils/chainTime.js';
 
 const log = logger.child({ module: 'RoundEvaluator' });
 
-/** Antelope epoch: 2000-01-01T00:00:00.000Z */
-const ANTELOPE_EPOCH_MS = Date.UTC(2000, 0, 1);
 
 export interface BlockRecord {
   block_num: number;
@@ -42,9 +41,10 @@ export interface ProducerRoundResult {
   lastBlock: number | null;
 }
 
-export function timestampToSlot(timestamp: string): number {
+/** Block slot of a timestamp, counted from the chain's block timestamp epoch. */
+export function timestampToSlot(timestamp: string, epochMs: number = ANTELOPE_EPOCH_MS): number {
   const ms = new Date(timestamp).getTime();
-  return Math.floor((ms - ANTELOPE_EPOCH_MS) / 500);
+  return Math.floor((ms - epochMs) / 500);
 }
 
 function slotToGlobalRound(slot: number, scheduleSize: number, blocksPerBp: number): number {
@@ -70,6 +70,8 @@ export class RoundEvaluator {
   private stateWriteInterval: number;
   private batchInserts: boolean;
   private blocksSinceLastStateWrite: number = 0;
+  /** Whether a schedule activation point has been set (saved or this run). */
+  private activationKnown = false;
 
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
   private roundForks: RoundFork[] = [];
@@ -115,6 +117,7 @@ export class RoundEvaluator {
 
     const savedActivation = await this.db.getState(this.config.chain, this.config.network, `${this.statePrefix}schedule_activation_global_round`);
     this.scheduleActivationGlobalRound = savedActivation ? parseInt(savedActivation, 10) : 0;
+    this.activationKnown = !!savedActivation;
 
     log.info(
       {
@@ -127,6 +130,11 @@ export class RoundEvaluator {
     );
   }
 
+  /** Block timestamp epoch; config objects built before it existed fall back to Antelope's. */
+  private get epochMs(): number {
+    return this.config.blockTimestampEpochMs ?? ANTELOPE_EPOCH_MS;
+  }
+
   get displayRound(): number {
     if (this.currentGlobalRound < 0) return 0;
     return this.currentGlobalRound - this.scheduleActivationGlobalRound;
@@ -136,11 +144,26 @@ export class RoundEvaluator {
     return this.displayRound;
   }
 
+  /**
+   * Producers per round: a round is one pass through the active schedule (producers ×
+   * blocksPerBp slots). Chains often start with fewer producers than they settle at (Libre
+   * mainnet ran 8 to 20 for its first seven weeks, Wire testnet 1 to 20 for three days), so a
+   * fixed size would give producers several turns per round and hide missed ones.
+   * SCHEDULE_SIZE applies only until a schedule is known.
+   */
+  private get roundSize(): number {
+    return this.schedule.producers.length || this.config.scheduleSize;
+  }
+
+  /** False until an activation point exists; round numbers are then counted from slot 0. */
+  get hasScheduleActivation(): boolean {
+    return this.activationKnown;
+  }
+
   async setScheduleActivation(activationTimestamp: string): Promise<void> {
-    const slot = timestampToSlot(activationTimestamp);
-    this.scheduleActivationGlobalRound = slotToGlobalRound(
-      slot, this.config.scheduleSize, this.config.blocksPerBp
-    );
+    this.activationKnown = true;
+    const slot = timestampToSlot(activationTimestamp, this.epochMs);
+    this.scheduleActivationGlobalRound = slotToGlobalRound(slot, this.roundSize, this.config.blocksPerBp);
 
     // Flush any open outage streaks — producers may no longer be in the new schedule
     await this.flushOutageStreaks();
@@ -152,6 +175,9 @@ export class RoundEvaluator {
     this.roundStartTimestamp = '';
     this.roundEndTimestamp = '';
     this.firstRoundIsPartial = true;
+    // The round size may have changed, and with it the scale of global round numbers:
+    // restart round tracking from the next block.
+    this.currentGlobalRound = -1;
 
     await this.db.setState(
       this.config.chain, this.config.network,
@@ -170,8 +196,8 @@ export class RoundEvaluator {
 
   async processBlock(block: BlockRecord): Promise<RoundResult | null> {
     const { producer, block_num, timestamp } = block;
-    const slot = timestampToSlot(timestamp);
-    const globalRound = slotToGlobalRound(slot, this.config.scheduleSize, this.config.blocksPerBp);
+    const slot = timestampToSlot(timestamp, this.epochMs);
+    const globalRound = slotToGlobalRound(slot, this.roundSize, this.config.blocksPerBp);
 
     if (this.currentGlobalRound === -1) {
       this.currentGlobalRound = globalRound;

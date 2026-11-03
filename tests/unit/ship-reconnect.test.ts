@@ -59,6 +59,7 @@ const position = (num: number, branch = 'a') => ({ block_num: num, block_id: idO
 interface BlockRequest {
   start: number;
   have: Array<{ block_num: number; block_id: string }>;
+  inFlight: number;
 }
 
 /** Real WebSocket endpoint speaking enough of the SHiP protocol, including have_positions. */
@@ -69,6 +70,8 @@ class FakeShip {
   upgradeHeaders: Array<Record<string, unknown>> = [];
   private sockets = new Set<WebSocket>();
   private timers = new Set<NodeJS.Timeout>();
+  /** Blocks each socket may still be sent: max_messages_in_flight, topped up by acks. */
+  private credits = new Map<WebSocket, number>();
 
   /** branchOf lets a test give one block number different ids on different nodes. */
   constructor(
@@ -131,7 +134,8 @@ class FakeShip {
         block_id: String(p.block_id),
       }));
       let start = Number(request.start_block_num);
-      this.requests.push({ start, have });
+      this.requests.push({ start, have, inFlight: Number(request.max_messages_in_flight) });
+      this.credits.set(socket, Number(request.max_messages_in_flight));
 
       // Same rule as nodeos: rewind to any position the node lacks or disagrees with.
       for (const p of have) {
@@ -139,6 +143,8 @@ class FakeShip {
         if (this.blockIdAvailable(p.block_num) !== p.block_id) start = p.block_num;
       }
       this.stream(socket, start);
+    } else if (type === 'get_blocks_ack_request_v0') {
+      this.credits.set(socket, (this.credits.get(socket) ?? 0) + Number(request.num_messages));
     }
   }
 
@@ -151,7 +157,8 @@ class FakeShip {
         return;
       }
       if (this.opts.advance) this.head++;
-      while (next <= this.head) {
+      while (next <= this.head && (this.credits.get(socket) ?? 0) > 0) {
+        this.credits.set(socket, this.credits.get(socket)! - 1);
         const headPos = position(this.head, this.branch(this.head));
         socket.send(Serializer.encode({
           type: 'result',
@@ -280,6 +287,30 @@ describe('ShipClient reconnect over real sockets', () => {
     expect(blocks.map((b) => b.num)).toEqual(Array.from({ length: 11 }, (_, i) => 100 + i));
   });
 
+  it('asks for the configured in-flight window, defaulting to 10', async () => {
+    const ship = await startShip(5);
+    const small = startClient({ url: ship.url, startBlock: 1 });
+    const large = startClient({ url: ship.url, startBlock: 1, maxMessagesInFlight: 1000 });
+    await small.client.connect();
+    await large.client.connect();
+    await until(() => ship.requests.length === 2, 'both block requests');
+    expect(ship.requests.map((r) => r.inFlight).sort((a, b) => a - b)).toEqual([10, 1000]);
+  });
+
+  it('with manualAck, sends no more than the window until the consumer acknowledges', async () => {
+    const ship = await startShip(50);
+    const { client, blocks } = startClient({ url: ship.url, startBlock: 1, maxMessagesInFlight: 3, manualAck: true });
+    await client.connect();
+    await until(() => blocks.length === 3, 'first window');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(blocks.length).toBe(3);
+    client.acknowledge();
+    client.acknowledge();
+    await until(() => blocks.length === 5, 'two more blocks');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(blocks.map((b) => b.num)).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it('fails over and back with every block delivered exactly once', async () => {
     const primary = await startShip(110, { advance: true });
     const failover = await startShip(110, { advance: true });
@@ -305,6 +336,36 @@ describe('ShipClient reconnect over real sockets', () => {
     for (let i = 1; i < blocks.length; i++) {
       expect(blocks[i].prev).toBe(blocks[i - 1].id);
     }
+  });
+
+  it('reports disconnects, reconnect attempts and endpoint changes, and passes LIB through', async () => {
+    const primary = await startShip(110, { advance: true });
+    const failover = await startShip(110, { advance: true });
+    const { client, blocks } = startClient({ url: primary.url, failoverUrls: [failover.url], startBlock: 100 });
+    const events: string[] = [];
+    let lib: number | undefined;
+    client.on('disconnect', ({ reason }: { reason: string }) => events.push(`disconnect:${reason}`));
+    client.on('reconnect_attempt', () => events.push('reconnect_attempt'));
+    client.on('endpoint_change', ({ from, to }: { from: number; to: number }) => events.push(`endpoint:${from}->${to}`));
+    client.on('block', (r: ShipResult) => { lib = r.last_irreversible?.block_num; });
+
+    await client.connect();
+    await until(() => blocks.length > 5, 'streaming from primary');
+    expect(client.endpointIndex).toBe(0);
+    expect(lib).toBeGreaterThanOrEqual(110);
+
+    const port = primary.port;
+    await primary.stop();
+    await until(() => client.endpointIndex === 1 && client.connectionState === 'streaming', 'on failover');
+    expect(client.endpointUrl).toBe(failover.url);
+
+    await startShip(failover.head, { advance: true }, port);
+    await until(() => client.endpointIndex === 0 && client.connectionState === 'streaming', 'back on primary');
+
+    expect(events[0]).toBe('disconnect:close');
+    expect(events).toContain('reconnect_attempt');
+    expect(events).toContain('endpoint:0->1');
+    expect(events.at(-1)).toBe('endpoint:1->0');
   });
 
   it('stays on the failover while the primary is behind the stream', async () => {

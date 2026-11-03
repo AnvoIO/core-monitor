@@ -10,19 +10,24 @@
  *
  * Environment:
  *   CATCHUP_SHIP_URL — SHiP endpoint for full history node (required)
- *   CATCHUP_START_BLOCK — start block (default: 1)
+ *   CATCHUP_START_BLOCK — start block (default: 1). Savanna chains must start at 1.
  *   CATCHUP_END_BLOCK — optional override; stop at this block instead of the
  *     live writer's position. Per-chain form: {CHAIN_ID}_CATCHUP_END_BLOCK.
  *     Use during recovery to let catchup outpace a far-behind live writer.
  *   POSTGRES_URL — PostgreSQL connection string (required)
  *   CHAINS — chain config (same as live writer)
+ *
+ * Without an override, a fresh run stops at the first block of the live writer's earliest
+ * round and saves that as catchup_end_block, so a resumed run (by then the catchup's own
+ * rounds are the earliest) still stops in the same place.
  */
 
 import { loadConfig } from './config.js';
 import { Database } from './store/Database.js';
 import { ShipClient } from './ship/ShipClient.js';
 import { ScheduleTracker } from './monitor/ScheduleTracker.js';
-import { RoundEvaluator, timestampToSlot, type BlockRecord } from './monitor/RoundEvaluator.js';
+import { RoundEvaluator, type BlockRecord } from './monitor/RoundEvaluator.js';
+import { SavannaCatchupSchedule } from './monitor/SavannaCatchupSchedule.js';
 import { logger } from './utils/logger.js';
 import type { ChainConfig } from './config.js';
 import type { ShipResult, ShipGetStatusResult } from './ship/types.js';
@@ -31,6 +36,8 @@ import { Name, Serializer } from '@wharfkit/antelope';
 const log = logger.child({ module: 'catchup' });
 
 const PROGRESS_INTERVAL = 10000;
+/** Blocks SHiP may send ahead of processing (acknowledged once processed). */
+const CATCHUP_MAX_IN_FLIGHT = 1000;
 
 interface CatchupChain {
   config: ChainConfig;
@@ -46,9 +53,26 @@ interface CatchupChain {
   startTime: number;
   lastProgressTime: number;
   pendingSchedule: any;
+  /** Set for Savanna chains on their first block. */
+  savanna: SavannaCatchupSchedule | null;
+  done: boolean;
   processingBlock: Promise<void>;
 }
 
+const END_BLOCK_KEY = 'catchup_end_block';
+
+/** First block of the live writer's earliest round; only meaningful before catchup writes rounds. */
+async function findLiveWriterFirstBlock(db: Database, chain: string, network: string): Promise<number> {
+  const first = await db.getEarliestRoundFirstBlock(chain, network);
+  if (first === null) return 0;
+  log.info({ chain, network, firstBlock: first }, 'Found live writer start point');
+  return first;
+}
+
+/**
+ * Pre-catchup_end_block fallback for resumed runs, and for runs that started before the live
+ * writer had any rounds: shortly before the live writer's current block.
+ */
 async function findLiveWriterStartBlock(db: Database, chain: string, network: string): Promise<number> {
   // Find the earliest round the live writer has recorded
   const earliest = await db.getEarliestRounds(chain, network, 1);
@@ -91,17 +115,32 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
   const chainPrefix = chainConfig.id.toUpperCase().replace(/[^A-Z0-9]/g, '_');
   const endBlockOverrideStr = process.env[`${chainPrefix}_CATCHUP_END_BLOCK`]
     || process.env.CATCHUP_END_BLOCK;
-  const endBlock = endBlockOverrideStr
-    ? parseInt(endBlockOverrideStr, 10)
-    : await findLiveWriterStartBlock(db, chainConfig.chain, chainConfig.network);
 
   // Resume from last processed block if available
-  const savedBlock = await db.getState(chainConfig.chain, chainConfig.network, 'catchup_last_block');
+  const { chain, network } = chainConfig;
+  const savedBlock = await db.getState(chain, network, 'catchup_last_block');
   const resumeBlock = savedBlock ? parseInt(savedBlock, 10) + 1 : 0;
-  const startBlock = resumeBlock > configStartBlock ? resumeBlock : configStartBlock;
   const resuming = resumeBlock > configStartBlock;
+  // A Savanna schedule tracker may have been saved before the evaluator's last block;
+  // resume early enough that it sees every block (no-op for other chains).
+  const startBlock = resuming
+    ? await SavannaCatchupSchedule.resumeBlock(db, chainConfig, resumeBlock)
+    : configStartBlock;
 
-  if (endBlock > 0 && startBlock >= endBlock) {
+  let endBlock: number;
+  const savedEnd = await db.getState(chain, network, END_BLOCK_KEY);
+  if (endBlockOverrideStr) {
+    endBlock = parseInt(endBlockOverrideStr, 10);
+  } else if (savedEnd) {
+    endBlock = parseInt(savedEnd, 10);
+  } else if (!resuming) {
+    endBlock = await findLiveWriterFirstBlock(db, chain, network);
+    if (endBlock > 0) await db.setState(chain, network, END_BLOCK_KEY, String(endBlock));
+  } else {
+    endBlock = await findLiveWriterStartBlock(db, chain, network);
+  }
+
+  if (endBlock > 0 && startBlock > endBlock) {
     log.info({ chain: chainConfig.id, startBlock, endBlock }, 'Already caught up');
     return;
   }
@@ -146,6 +185,8 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
     startTime: Date.now(),
     lastProgressTime: Date.now(),
     pendingSchedule: null,
+    savanna: null,
+    done: false,
     processingBlock: Promise.resolve(),
   };
 
@@ -153,10 +194,19 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
     url: shipUrl,
     access: chainConfig.shipAccess,
     startBlock,
-    endBlock: endBlock > 0 ? endBlock : 0xffffffff,
+    // SHiP's end block is exclusive; the catchup processes endBlock itself to close its last round.
+    endBlock: endBlock > 0 ? endBlock + 1 : 0xffffffff,
     fetchBlock: true,
     fetchTraces: true,
     fetchDeltas: false,
+    blockTimestampEpochMs: chainConfig.blockTimestampEpochMs,
+    // Bulk read: with SHiP's default-sized window a remote endpoint (e.g. through Cloudflare,
+    // ~25 ms away) caps the stream near 300 blocks/s.
+    maxMessagesInFlight: CATCHUP_MAX_IN_FLIGHT,
+    // Acknowledge after processing, so at most CATCHUP_MAX_IN_FLIGHT blocks wait in memory.
+    // Acknowledging on delivery let SHiP outrun processing over the LAN: decoding starved
+    // the database work (~60 blocks/s) while the queue grew without limit.
+    manualAck: true,
   });
   state.ship = ship;
 
@@ -181,7 +231,7 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
       processCatchupBlock(state, result)
     ).catch(err => {
       log.error({ err, chain: chainConfig.id }, 'Catchup block processing error');
-    });
+    }).finally(() => ship.acknowledge());
   });
 
   ship.on('max_reconnects', () => {
@@ -191,36 +241,63 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
   await ship.connect();
 }
 
+async function finishCatchup(state: CatchupChain, blockNum: number, timestamp: string): Promise<void> {
+  state.done = true;
+  state.ship.disconnect();
+  await state.savanna?.persist();
+
+  // Batch inserts don't maintain daily stats or outage events; derive them for everything
+  // before the live writer's start.
+  const { chain, network } = state.config;
+  const from = await state.db.getEarliestRoundTimestamp(chain, network);
+  if (from && from < timestamp) {
+    await state.db.rebuildDerivedStats(chain, network, from, timestamp);
+    log.info({ chain: state.config.id, from, to: timestamp }, 'Rebuilt daily stats and outage events');
+  }
+
+  log.info({
+    chain: state.config.id,
+    blockNum,
+    endBlock: state.endBlock,
+    blocksProcessed: state.blocksProcessed,
+  }, 'Catchup complete — reached live writer start point');
+}
+
 async function processCatchupBlock(state: CatchupChain, result: ShipResult): Promise<void> {
-  if (!result.this_block || !result.block) return;
+  if (state.done || !result.this_block || !result.block) return;
 
   const blockNum = result.this_block.block_num;
   const block = result.block;
   state.currentBlock = blockNum;
   state.headBlock = result.head.block_num;
 
-  // Check if we've reached the live writer's territory
-  if (state.endBlock > 0 && blockNum >= state.endBlock) {
-    log.info({
-      chain: state.config.id,
-      blockNum,
-      endBlock: state.endBlock,
-      roundsProcessed: state.blocksProcessed,
-    }, 'Catchup complete — reached live writer start point');
-    state.ship.disconnect();
+  // Past the live writer's start (e.g. a resumed stream): nothing to do.
+  if (state.endBlock > 0 && blockNum > state.endBlock) {
+    await finishCatchup(state, blockNum, block.timestamp);
     return;
   }
 
-  // Schedule change detection (same as live writer)
-  // Store proposed schedule from block headers
-  if (block.new_producers && block.new_producers.version > state.schedule.version) {
+  // The genesis block has no producer; there's nothing to evaluate.
+  if (block.savanna && !block.producer) return;
+
+  if (block.savanna) {
+    // Savanna chains: schedules come from proposer policy diffs, not schedule_version.
+    state.savanna ??= new SavannaCatchupSchedule(state.config, state.db, state.schedule, state.evaluator);
+    if (!(await state.savanna.process({ producer: block.producer, timestamp: block.timestamp, savanna: block.savanna }, blockNum))) {
+      state.done = true;
+      state.ship.disconnect();
+      return;
+    }
+  } else if (block.new_producers && block.new_producers.version > state.schedule.version) {
+    // Schedule change detection (same as live writer)
+    // Store proposed schedule from block headers
     state.pendingSchedule = block.new_producers;
     log.info({ chain: state.config.id, version: block.new_producers.version, blockNum },
       'Pending schedule detected');
   }
 
   // Apply when schedule_version in block header actually increments
-  if (block.schedule_version > state.schedule.version && state.pendingSchedule) {
+  if (!block.savanna && block.schedule_version > state.schedule.version && state.pendingSchedule) {
     const changed = await state.schedule.updateSchedule(
       state.pendingSchedule.version,
       state.pendingSchedule.producers,
@@ -236,11 +313,12 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
   }
 
   // Producer events (regproducer/unregprod/kickbp)
+  const sys = state.config.systemAccount;
   for (const trace of result.traces) {
     for (const actionTrace of trace.action_traces) {
       const actAccount = String(actionTrace.act.account);
       const actName = String(actionTrace.act.name);
-      if (actAccount === 'eosio' && (actName === 'regproducer' || actName === 'unregprod' || actName === 'kickbp')) {
+      if (actAccount === sys && (actName === 'regproducer' || actName === 'unregprod' || actName === 'kickbp')) {
         let producerName = '';
         if (actName === 'kickbp') {
           try {
@@ -251,12 +329,12 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
               producerName = String(decoded);
             }
           } catch (err) {
-    log.warn({ err }, 'Failed — will detect from block headers');
-  }
+            log.warn({ err, blockNum }, 'Could not decode kickbp data; skipping event');
+          }
         } else {
           producerName = String(actionTrace.act.authorization?.[0]?.actor || '');
         }
-        if (producerName && producerName !== 'eosio') {
+        if (producerName && producerName !== sys) {
           await state.db.insertProducerEvent({
             chain: state.config.chain, network: state.config.network,
             producer: producerName, action: actName,
@@ -279,11 +357,17 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
     block_num: blockNum,
     producer: block.producer,
     timestamp: block.timestamp,
-    schedule_version: block.schedule_version,
+    schedule_version: state.savanna?.activeVersion ?? block.schedule_version,
   };
   await state.evaluator.processBlock(blockRecord);
 
   state.blocksProcessed++;
+
+  // The live writer starts at endBlock. Processing it closed the catchup's last round.
+  if (state.endBlock > 0 && blockNum >= state.endBlock) {
+    await finishCatchup(state, blockNum, block.timestamp);
+    return;
+  }
 
   // Progress logging
   const now = Date.now();
@@ -305,7 +389,7 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
       target,
       pct: `${pct}%`,
       bps,
-      schedule: `v${state.schedule.version}`,
+      schedule: `v${state.savanna?.activeVersion ?? state.schedule.version}`,
       eta,
     }, 'Catchup progress');
   }
