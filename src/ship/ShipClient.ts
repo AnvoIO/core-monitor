@@ -384,6 +384,7 @@ export class ShipClient extends EventEmitter {
       blockTimestampEpochMs: options.blockTimestampEpochMs ?? ANTELOPE_EPOCH_MS,
       failbackIntervalMs: options.failbackIntervalMs || 60000,
       maxMessagesInFlight: options.maxMessagesInFlight || 10,
+      manualAck: options.manualAck || false,
     };
     this.access = options.access ?? null;
     // Dedupe so a failover entry equal to the primary can't consume a rotation slot.
@@ -850,6 +851,14 @@ export class ShipClient extends EventEmitter {
 
     this.recordDelivered(blockNum, blockId);
     this.emit('block', shipResult);
+    if (!this.options.manualAck) this.ack();
+  }
+
+  /**
+   * With manualAck: a delivered block has been processed, so SHiP may send another. An
+   * acknowledgement for a block from before a reconnect widens the new window by one.
+   */
+  acknowledge(): void {
     this.ack();
   }
 
