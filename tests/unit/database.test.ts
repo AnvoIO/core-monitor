@@ -107,6 +107,25 @@ describe('Database', () => {
       expect(producers[0].blocks_produced).toBe(12);
       expect(producers[1].blocks_produced).toBe(0);
     });
+
+    it('finds the first block of the earliest round by time, not round number', async () => {
+      expect(await db.getEarliestRoundFirstBlock('wire', 'testnet')).toBeNull();
+      const round = (n: number, start: string, firstBlocks: Array<number | null>) =>
+        db.insertRound({
+          chain: 'wire', network: 'testnet', round_number: n, schedule_version: 1,
+          timestamp_start: start, timestamp_end: start, producers_scheduled: firstBlocks.length,
+          producers_produced: 1, producers_missed: 0,
+        }).then((id) => Promise.all(firstBlocks.map((fb, position) => db.insertRoundProducer({
+          round_id: id, producer: `p${position}`, position, blocks_expected: 12,
+          blocks_produced: fb === null ? 0 : 12, blocks_missed: fb === null ? 12 : 0,
+          first_block: fb, last_block: fb === null ? null : fb + 11,
+        }))));
+      await round(1, `${TEST_DAY}T01:00:00.000`, [5000, 5012]);
+      // Earlier in time, higher round number (numbering restarts per schedule activation).
+      await round(9, `${TEST_DAY}T00:00:00.000`, [null, 2012, 2000]);
+      expect(await db.getEarliestRoundFirstBlock('wire', 'testnet')).toBe(2000);
+      expect(await db.getEarliestRoundFirstBlock('libre', 'testnet')).toBeNull();
+    });
   });
 
   describe('missed_block_events', () => {

@@ -366,7 +366,6 @@ export class ShipClient extends EventEmitter {
   private receivedAbi = false;
   /** The SHiP ABI uses a Savanna block_header (no schedule_version; proposer policy diffs). */
   private savannaHeaders = false;
-  private readonly maxInFlight = 10;
 
   constructor(options: ShipClientOptions) {
     super();
@@ -384,6 +383,7 @@ export class ShipClient extends EventEmitter {
       handshakeTimeoutMs: options.handshakeTimeoutMs || 10000,
       blockTimestampEpochMs: options.blockTimestampEpochMs ?? ANTELOPE_EPOCH_MS,
       failbackIntervalMs: options.failbackIntervalMs || 60000,
+      maxMessagesInFlight: options.maxMessagesInFlight || 10,
     };
     this.access = options.access ?? null;
     // Dedupe so a failover entry equal to the primary can't consume a rotation slot.
@@ -947,7 +947,7 @@ export class ShipClient extends EventEmitter {
         {
           start_block_num: startBlock,
           end_block_num: this.options.endBlock,
-          max_messages_in_flight: this.maxInFlight,
+          max_messages_in_flight: this.options.maxMessagesInFlight,
           have_positions: this.deliveredPositions,
           irreversible_only: false,
           fetch_block: this.options.fetchBlock,

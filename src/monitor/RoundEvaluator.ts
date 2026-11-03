@@ -72,6 +72,8 @@ export class RoundEvaluator {
   private blocksSinceLastStateWrite: number = 0;
   /** Whether a schedule activation point has been set (saved or this run). */
   private activationKnown = false;
+  /** Size rounds by the active schedule instead of SCHEDULE_SIZE (see useScheduleSizedRounds). */
+  private scheduleSizedRounds = false;
 
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
   private roundForks: RoundFork[] = [];
@@ -144,6 +146,21 @@ export class RoundEvaluator {
     return this.displayRound;
   }
 
+  /**
+   * Make a round one pass through the active schedule (producers × blocksPerBp slots) rather
+   * than SCHEDULE_SIZE × blocksPerBp. For Savanna chains, whose schedules change size (Wire
+   * testnet ran with 1 to 20 producers before reaching 21); a fixed size misjudges rounds.
+   */
+  useScheduleSizedRounds(): void {
+    this.scheduleSizedRounds = true;
+  }
+
+  /** Producers per round. */
+  private get roundSize(): number {
+    const active = this.scheduleSizedRounds ? this.schedule.producers.length : 0;
+    return active > 0 ? active : this.config.scheduleSize;
+  }
+
   /** False until an activation point exists; round numbers are then counted from slot 0. */
   get hasScheduleActivation(): boolean {
     return this.activationKnown;
@@ -152,9 +169,7 @@ export class RoundEvaluator {
   async setScheduleActivation(activationTimestamp: string): Promise<void> {
     this.activationKnown = true;
     const slot = timestampToSlot(activationTimestamp, this.epochMs);
-    this.scheduleActivationGlobalRound = slotToGlobalRound(
-      slot, this.config.scheduleSize, this.config.blocksPerBp
-    );
+    this.scheduleActivationGlobalRound = slotToGlobalRound(slot, this.roundSize, this.config.blocksPerBp);
 
     // Flush any open outage streaks — producers may no longer be in the new schedule
     await this.flushOutageStreaks();
@@ -166,6 +181,9 @@ export class RoundEvaluator {
     this.roundStartTimestamp = '';
     this.roundEndTimestamp = '';
     this.firstRoundIsPartial = true;
+    // The round size may have changed, and with it the scale of global round numbers:
+    // restart round tracking from the next block.
+    if (this.scheduleSizedRounds) this.currentGlobalRound = -1;
 
     await this.db.setState(
       this.config.chain, this.config.network,
@@ -185,7 +203,7 @@ export class RoundEvaluator {
   async processBlock(block: BlockRecord): Promise<RoundResult | null> {
     const { producer, block_num, timestamp } = block;
     const slot = timestampToSlot(timestamp, this.epochMs);
-    const globalRound = slotToGlobalRound(slot, this.config.scheduleSize, this.config.blocksPerBp);
+    const globalRound = slotToGlobalRound(slot, this.roundSize, this.config.blocksPerBp);
 
     if (this.currentGlobalRound === -1) {
       this.currentGlobalRound = globalRound;

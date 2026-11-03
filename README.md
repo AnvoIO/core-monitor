@@ -102,7 +102,7 @@ CATCHUP_SHIP_URL=ws://your-history-node:8088
 docker compose --profile catchup up -d catchup
 ```
 
-The catchup writer automatically detects where the live writer started and stops there — no overlap, no manual coordination. On restart, it resumes from the last processed block rather than starting over.
+The catchup writer automatically detects where the live writer started (the first block of its earliest round) and stops there — no overlap, no manual coordination. It saves that block as `catchup_end_block`, so a restarted run stops in the same place, and resumes from the last processed block rather than starting over. Set `CATCHUP_SHIP_URL` per chain with `{CHAIN}_CATCHUP_SHIP_URL`; Savanna chains need extra care (see [Wire](#wire-savanna-chains)).
 
 ### Development
 
@@ -152,9 +152,19 @@ Wire differs from Libre in ways the writer handles automatically when the SHiP A
 - **Schedule changes.** Headers carry no `schedule_version`. A new schedule arrives as a proposer policy diff, and the writer applies Wire v1.0.0's promotion rules: proposed → pending at the next 12-slot producer turn → active once the proposing block is final (two-chain finality from each header's QC claim). This was checked against Wire testnet history: across 138,634 blocks in two replays, including the change to schedule 47, every block's producer matched the tracked schedule.
 - **Timestamps.** Block slots count from 2025-01-01, so `BLOCK_TIMESTAMP_EPOCH_MS` must be set. Stored timestamps are real UTC times.
 - **Decoding.** Only the block header is decoded; the full block's QC uses a `bitset` type the ABI decoder lacks. Transaction traces with signature types the decoder doesn't know are skipped with a warning (they're only read for producer registration events).
+- **Round size.** A round is one pass through the active schedule: producers × 12 slots. Wire testnet's schedule grew from 1 to 21 producers in its first days, so `SCHEDULE_SIZE` only sets the dashboard's round timing on Savanna chains.
 - **Round numbers.** There's no Hyperion lookup for when the starting schedule became active, so rounds are numbered from when the writer first sees the chain, and from each schedule change after that.
 
-The catchup writer doesn't support Savanna chains.
+**Backfilling a Savanna chain.** The catchup writer must start at block 1 (`CATCHUP_START_BLOCK=1`, the default): no earlier schedule is known, so it starts from the genesis producer and applies every proposer policy diff from there. That also gives every schedule its real activation point. The live writer, by contrast, numbers rounds of its starting schedule from when it first saw the chain. If the live writer was already running, those round numbers won't match the catchup's for the same schedule version and the catchup's rows for clashing numbers are dropped as duplicates. So before starting the catchup, either backfill first and start the live writer afterwards, or stop the live writer and shift its rounds of that schedule onto the activation point the catchup will find.
+
+Run the catchup for the Savanna chain only, e.g.:
+
+```bash
+docker compose --profile catchup run -d --name core-monitor-catchup-wire \
+  -e CHAINS=wire_testnet \
+  -e WIRE_TESTNET_CATCHUP_SHIP_URL=wss://ship.testnet.wire.pdx.cryptobloks.io \
+  catchup
+```
 
 ### Database
 

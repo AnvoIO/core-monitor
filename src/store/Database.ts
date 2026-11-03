@@ -791,6 +791,20 @@ export class Database {
     return result.rows;
   }
 
+  /** First block of the earliest stored round (by time), or null when there are no rounds. */
+  async getEarliestRoundFirstBlock(chain: string, network: string): Promise<number | null> {
+    const result = await this.pool.query(
+      `SELECT MIN(rp.first_block) AS first_block FROM round_producers rp
+       WHERE rp.round_id = (
+         SELECT id FROM rounds WHERE chain = $1 AND network = $2
+         ORDER BY timestamp_start ASC LIMIT 1
+       )`,
+      [chain, network]
+    );
+    const value = result.rows[0]?.first_block;
+    return value === null || value === undefined ? null : Number(value);
+  }
+
   async getRoundProducers(roundId: number): Promise<any[]> {
     const result = await this.pool.query(
       'SELECT * FROM round_producers WHERE round_id = $1 ORDER BY position',
