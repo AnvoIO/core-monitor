@@ -481,8 +481,6 @@ export class ChainMonitor extends EventEmitter {
    */
   private async processSavannaSchedule(block: NonNullable<ShipResult['block']>, blockNum: number): Promise<void> {
     if (!this.savanna) {
-      // Savanna schedules change size; rounds follow the active schedule.
-      this.roundEvaluator.useScheduleSizedRounds();
       this.savanna = await this.loadSavannaTracker();
       // No activation time for the starting schedule (there's no Hyperion lookup for Savanna):
       // count rounds from here instead of from slot 0.

@@ -37,9 +37,7 @@ export class SavannaCatchupSchedule {
     private db: Database,
     private schedule: ScheduleTracker,
     private evaluator: RoundEvaluator
-  ) {
-    evaluator.useScheduleSizedRounds();
-  }
+  ) {}
 
   /** Version of the active schedule, or null before the first block. */
   get activeVersion(): number | null {

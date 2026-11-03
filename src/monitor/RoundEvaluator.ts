@@ -72,8 +72,6 @@ export class RoundEvaluator {
   private blocksSinceLastStateWrite: number = 0;
   /** Whether a schedule activation point has been set (saved or this run). */
   private activationKnown = false;
-  /** Size rounds by the active schedule instead of SCHEDULE_SIZE (see useScheduleSizedRounds). */
-  private scheduleSizedRounds = false;
 
   private roundBlocks: Map<string, { count: number; firstBlock: number; lastBlock: number }> = new Map();
   private roundForks: RoundFork[] = [];
@@ -147,18 +145,14 @@ export class RoundEvaluator {
   }
 
   /**
-   * Make a round one pass through the active schedule (producers × blocksPerBp slots) rather
-   * than SCHEDULE_SIZE × blocksPerBp. For Savanna chains, whose schedules change size (Wire
-   * testnet ran with 1 to 20 producers before reaching 21); a fixed size misjudges rounds.
+   * Producers per round: a round is one pass through the active schedule (producers ×
+   * blocksPerBp slots). Chains often start with fewer producers than they settle at (Libre
+   * mainnet ran 8 to 20 for its first seven weeks, Wire testnet 1 to 20 for three days), so a
+   * fixed size would give producers several turns per round and hide missed ones.
+   * SCHEDULE_SIZE applies only until a schedule is known.
    */
-  useScheduleSizedRounds(): void {
-    this.scheduleSizedRounds = true;
-  }
-
-  /** Producers per round. */
   private get roundSize(): number {
-    const active = this.scheduleSizedRounds ? this.schedule.producers.length : 0;
-    return active > 0 ? active : this.config.scheduleSize;
+    return this.schedule.producers.length || this.config.scheduleSize;
   }
 
   /** False until an activation point exists; round numbers are then counted from slot 0. */
@@ -183,7 +177,7 @@ export class RoundEvaluator {
     this.firstRoundIsPartial = true;
     // The round size may have changed, and with it the scale of global round numbers:
     // restart round tracking from the next block.
-    if (this.scheduleSizedRounds) this.currentGlobalRound = -1;
+    this.currentGlobalRound = -1;
 
     await this.db.setState(
       this.config.chain, this.config.network,

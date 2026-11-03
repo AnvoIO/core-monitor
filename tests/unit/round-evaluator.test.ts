@@ -130,6 +130,27 @@ describe('RoundEvaluator (slot-based)', () => {
     expect(rounds.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('sizes rounds by the active schedule, so a missed turn shows with fewer producers', async () => {
+    // Two producers against SCHEDULE_SIZE 3: a round is 2 x 4 = 8 slots. With 12-slot rounds
+    // each producer would get a second turn in the round and bravo's miss would be hidden.
+    await schedule.updateSchedule(2, ['alpha', 'bravo'].map(p => ({ producer_name: p, block_signing_key: 'EOS000' })), 2, slotToTimestamp(960));
+    await evaluator.setScheduleActivation(slotToTimestamp(960));
+    const twoProducer = (slot: number) => ['alpha', 'bravo'][Math.floor((slot % 8) / 4)];
+    let blockNum = 1;
+    const results = [];
+    for (let slot = 960; slot <= 984; slot++) {
+      const producer = twoProducer(slot);
+      if (producer === 'bravo' && slot >= 972 && slot < 976) continue; // bravo misses one turn
+      const r = await evaluator.processBlock({ block_num: blockNum++, producer, timestamp: slotToTimestamp(slot), schedule_version: 2 });
+      if (r) results.push(r);
+    }
+    // [960-967] is the first round after activation (discarded); [968-975] and [976-983] count.
+    expect(results.map(r => [r.timestampStart, r.producerResults.map(p => [p.producer, p.blocksProduced])])).toEqual([
+      [slotToTimestamp(968), [['alpha', 4], ['bravo', 0]]],
+      [slotToTimestamp(976), [['alpha', 4], ['bravo', 4]]],
+    ]);
+  });
+
   it('should set schedule-relative round numbers', async () => {
     // Set activation at global round 95
     await evaluator.setScheduleActivation(slotToTimestamp(95 * SLOTS_PER_ROUND));
