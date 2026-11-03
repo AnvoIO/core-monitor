@@ -25,4 +25,9 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-.claude/
+# Agent settings stay local; the shared skills symlink is tracked
+.claude/*
+!.claude/skills
+
+# Agent handoffs (session state, never committed)
+_handoff/
