@@ -805,6 +805,15 @@ export class Database {
     return value === null || value === undefined ? null : Number(value);
   }
 
+  /** Start of the earliest stored round, or null when there are no rounds. */
+  async getEarliestRoundTimestamp(chain: string, network: string): Promise<string | null> {
+    const result = await this.pool.query(
+      `SELECT MIN(timestamp_start) AS ts FROM rounds WHERE chain = $1 AND network = $2`,
+      [chain, network]
+    );
+    return result.rows[0]?.ts ?? null;
+  }
+
   async getRoundProducers(roundId: number): Promise<any[]> {
     const result = await this.pool.query(
       'SELECT * FROM round_producers WHERE round_id = $1 ORDER BY position',
@@ -1157,6 +1166,80 @@ export class Database {
        params.start_round_number, params.end_round_number, params.schedule_version,
        params.timestamp_start, params.timestamp_end]
     );
+  }
+
+  /**
+   * Re-derive daily stats and outage events for rounds starting in [fromTs, toTs) from the
+   * rounds themselves, e.g. after the catchup writer inserted them (its batch inserts don't
+   * maintain these). Whole days before toTs's day are replaced; toTs's day, which the live
+   * writer may be adding to, is reconciled like the hourly job does. Idempotent.
+   */
+  async rebuildDerivedStats(chain: string, network: string, fromTs: string, toTs: string): Promise<void> {
+    const fromDay = fromTs.substring(0, 10);
+    const toDay = toTs.substring(0, 10);
+    await this.transaction(async (client) => {
+      const days = [chain, network, fromDay, toDay];
+      await client.query(
+        `DELETE FROM producer_stats_daily
+         WHERE chain = $1 AND network = $2 AND day >= $3::DATE AND day < $4::DATE`, days);
+      await client.query(
+        `DELETE FROM round_counts_daily
+         WHERE chain = $1 AND network = $2 AND day >= $3::DATE AND day < $4::DATE`, days);
+      await client.query(
+        `INSERT INTO producer_stats_daily (chain, network, day, producer,
+          rounds_scheduled, rounds_produced, rounds_missed,
+          blocks_expected, blocks_produced, blocks_missed)
+        SELECT r.chain, r.network, DATE(r.timestamp_start), rp.producer,
+          COUNT(*),
+          SUM(CASE WHEN rp.blocks_produced > 0 THEN 1 ELSE 0 END),
+          SUM(CASE WHEN rp.blocks_produced = 0 THEN 1 ELSE 0 END),
+          SUM(rp.blocks_expected), SUM(rp.blocks_produced), SUM(rp.blocks_missed)
+        FROM round_producers rp
+        JOIN rounds r ON rp.round_id = r.id
+        WHERE r.chain = $1 AND r.network = $2
+          AND DATE(r.timestamp_start) >= $3::DATE AND DATE(r.timestamp_start) < $4::DATE
+        GROUP BY r.chain, r.network, DATE(r.timestamp_start), rp.producer`, days);
+      await client.query(
+        `INSERT INTO round_counts_daily (chain, network, day, total_rounds, perfect_rounds, issue_rounds)
+        SELECT chain, network, DATE(timestamp_start), COUNT(*),
+          SUM(CASE WHEN producers_missed = 0 THEN 1 ELSE 0 END)::INTEGER,
+          SUM(CASE WHEN producers_missed > 0 THEN 1 ELSE 0 END)::INTEGER
+        FROM rounds
+        WHERE chain = $1 AND network = $2
+          AND DATE(timestamp_start) >= $3::DATE AND DATE(timestamp_start) < $4::DATE
+        GROUP BY chain, network, DATE(timestamp_start)`, days);
+
+      // Outage events: runs of consecutive rounds a producer was scheduled and produced nothing.
+      const range = [chain, network, fromTs, toTs];
+      await client.query(
+        `DELETE FROM outage_events
+         WHERE chain = $1 AND network = $2 AND timestamp_start >= $3 AND timestamp_start < $4`, range);
+      await client.query(
+        `WITH ordered AS (
+          SELECT r.chain, r.network, rp.producer, r.round_number, r.schedule_version,
+            r.timestamp_start, r.timestamp_end,
+            CASE WHEN rp.blocks_produced = 0 THEN 0 ELSE 1 END AS is_producing
+          FROM round_producers rp
+          JOIN rounds r ON rp.round_id = r.id
+          WHERE r.chain = $1 AND r.network = $2 AND r.timestamp_start >= $3 AND r.timestamp_start < $4
+        ),
+        groups AS (
+          SELECT *, SUM(is_producing) OVER (
+            PARTITION BY producer ORDER BY timestamp_start ROWS UNBOUNDED PRECEDING
+          ) AS streak_group
+          FROM ordered
+        )
+        INSERT INTO outage_events (chain, network, producer, rounds_count,
+          start_round_number, end_round_number, schedule_version, timestamp_start, timestamp_end)
+        SELECT chain, network, producer, COUNT(*),
+          (ARRAY_AGG(round_number ORDER BY timestamp_start))[1],
+          (ARRAY_AGG(round_number ORDER BY timestamp_start DESC))[1],
+          MIN(schedule_version), MIN(timestamp_start), MAX(timestamp_end)
+        FROM groups
+        WHERE is_producing = 0
+        GROUP BY chain, network, producer, streak_group`, range);
+    });
+    await this.reconcileDay(chain, network, toDay);
   }
 
   /** Reconcile a single day's summaries from raw data (idempotent). */

@@ -102,7 +102,7 @@ CATCHUP_SHIP_URL=ws://your-history-node:8088
 docker compose --profile catchup up -d catchup
 ```
 
-The catchup writer automatically detects where the live writer started (the first block of its earliest round) and stops there — no overlap, no manual coordination. It saves that block as `catchup_end_block`, so a restarted run stops in the same place, and resumes from the last processed block rather than starting over. Set `CATCHUP_SHIP_URL` per chain with `{CHAIN}_CATCHUP_SHIP_URL`; Savanna chains need extra care (see [Wire](#wire-savanna-chains)).
+The catchup writer automatically detects where the live writer started (the first block of its earliest round) and stops there — no overlap, no manual coordination. When it finishes it re-derives daily stats and outage events for everything before that point, since its batch inserts skip them. It saves that block as `catchup_end_block`, so a restarted run stops in the same place, and resumes from the last processed block rather than starting over. Set `CATCHUP_SHIP_URL` per chain with `{CHAIN}_CATCHUP_SHIP_URL`; Savanna chains need extra care (see [Wire](#wire-savanna-chains)).
 
 ### Development
 
