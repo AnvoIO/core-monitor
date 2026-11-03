@@ -9,6 +9,7 @@ function createMockChannel(name: string = 'mock'): AlertChannel & { calls: Alert
     calls,
     send: vi.fn(async (msg: AlertMessage) => {
       calls.push(msg);
+      return 'sent' as const;
     }),
   };
 }

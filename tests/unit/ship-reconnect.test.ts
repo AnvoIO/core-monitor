@@ -307,6 +307,36 @@ describe('ShipClient reconnect over real sockets', () => {
     }
   });
 
+  it('reports disconnects, reconnect attempts and endpoint changes, and passes LIB through', async () => {
+    const primary = await startShip(110, { advance: true });
+    const failover = await startShip(110, { advance: true });
+    const { client, blocks } = startClient({ url: primary.url, failoverUrls: [failover.url], startBlock: 100 });
+    const events: string[] = [];
+    let lib: number | undefined;
+    client.on('disconnect', ({ reason }: { reason: string }) => events.push(`disconnect:${reason}`));
+    client.on('reconnect_attempt', () => events.push('reconnect_attempt'));
+    client.on('endpoint_change', ({ from, to }: { from: number; to: number }) => events.push(`endpoint:${from}->${to}`));
+    client.on('block', (r: ShipResult) => { lib = r.last_irreversible?.block_num; });
+
+    await client.connect();
+    await until(() => blocks.length > 5, 'streaming from primary');
+    expect(client.endpointIndex).toBe(0);
+    expect(lib).toBeGreaterThanOrEqual(110);
+
+    const port = primary.port;
+    await primary.stop();
+    await until(() => client.endpointIndex === 1 && client.connectionState === 'streaming', 'on failover');
+    expect(client.endpointUrl).toBe(failover.url);
+
+    await startShip(failover.head, { advance: true }, port);
+    await until(() => client.endpointIndex === 0 && client.connectionState === 'streaming', 'back on primary');
+
+    expect(events[0]).toBe('disconnect:close');
+    expect(events).toContain('reconnect_attempt');
+    expect(events).toContain('endpoint:0->1');
+    expect(events.at(-1)).toBe('endpoint:1->0');
+  });
+
   it('stays on the failover while the primary is behind the stream', async () => {
     const failover = await startShip(1000);
     const lagging = await startShip(500);

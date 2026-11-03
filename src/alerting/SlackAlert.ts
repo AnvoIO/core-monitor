@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
-import type { AlertChannel, AlertMessage } from './types.js';
+import type { AlertChannel, AlertMessage, AlertSendResult } from './types.js';
+import { errorCause } from '../utils/errors.js';
 
 const log = logger.child({ module: 'SlackAlert' });
 
@@ -27,8 +28,8 @@ export class SlackAlert implements AlertChannel {
     return this.webhookUrl.length > 0;
   }
 
-  async send(message: AlertMessage): Promise<void> {
-    if (!this.isConfigured) return;
+  async send(message: AlertMessage): Promise<AlertSendResult> {
+    if (!this.isConfigured) return 'skipped';
 
     const emoji = SEVERITY_EMOJI[message.severity] || '';
     const color = SEVERITY_COLOR[message.severity] || '#cccccc';
@@ -55,9 +56,12 @@ export class SlackAlert implements AlertChannel {
       if (!response.ok) {
         const body = await response.text();
         log.error({ status: response.status, body }, 'Slack webhook error');
+        return 'failed';
       }
+      return 'sent';
     } catch (err) {
-      log.error({ err }, 'Failed to send Slack message');
+      log.error({ err, cause: errorCause(err) }, 'Failed to send Slack message');
+      return 'failed';
     }
   }
 }

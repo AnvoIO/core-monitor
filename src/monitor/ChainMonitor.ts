@@ -7,6 +7,7 @@ import { Database } from '../store/Database.js';
 import { chainLogger } from '../utils/logger.js';
 import type { ChainConfig } from '../config.js';
 import type { ShipResult, ShipGetStatusResult } from '../ship/types.js';
+import * as metrics from '../metrics/metrics.js';
 
 export class ChainMonitor extends EventEmitter {
   private config: ChainConfig;
@@ -21,6 +22,7 @@ export class ChainMonitor extends EventEmitter {
   private lastBlockProducer: string = '';
   private pendingSchedule: { version: number; producers: Array<{ producer_name: string; block_signing_key: string }> } | null = null;
   private processingBlock: Promise<void> = Promise.resolve();
+  private running = false;
 
   constructor(config: ChainConfig, db: Database) {
     super();
@@ -46,6 +48,10 @@ export class ChainMonitor extends EventEmitter {
     // Determine start block
     const lastBlock = await this.db.getState(this.config.chain, this.config.network, 'last_block');
     const startBlock = lastBlock ? parseInt(lastBlock, 10) + 1 : 0;
+
+    const { chain, network } = this.config;
+    metrics.initChainSeries(chain, network);
+    this.initProducerMetrics();
 
     this.ship = new ShipClient({
       url: this.config.shipUrl,
@@ -81,12 +87,34 @@ export class ChainMonitor extends EventEmitter {
       });
     });
 
+    this.ship.on('disconnect', () => metrics.shipDisconnects.inc({ chain, network }));
+    this.ship.on('reconnect_attempt', () => metrics.shipReconnectAttempts.inc({ chain, network }));
+    this.ship.on('endpoint_change', ({ from, to }: { from: number; to: number }) => {
+      if (from === 0 && to > 0) metrics.shipFailovers.inc({ chain, network });
+    });
+    metrics.registerChainSource(chain, network, () => {
+      const state = this.ship.connectionState;
+      return {
+        running: this.running,
+        connected: state === 'connected' || state === 'streaming',
+        endpointIndex: this.ship.endpointIndex,
+        url: this.ship.endpointUrl,
+      };
+    });
+
     this.ship.on('max_reconnects', () => {
+      this.running = false;
       this.log.error('Max reconnection attempts reached, monitor stopping');
       this.emit('fatal', new Error('Max reconnection attempts reached'));
     });
 
+    this.running = true;
     await this.ship.connect();
+  }
+
+  /** Create this schedule's producer counter series at 0, so their first increment is visible. */
+  private initProducerMetrics(): void {
+    metrics.initProducerSeries(this.config.chain, this.config.network, this.schedule.producers);
   }
 
   private async fetchSchedule(): Promise<void> {
@@ -167,6 +195,7 @@ export class ChainMonitor extends EventEmitter {
 
   stop(): void {
     this.log.info('Stopping chain monitor');
+    this.running = false;
     if (this.ship) this.ship.disconnect();
   }
 
@@ -192,6 +221,7 @@ export class ChainMonitor extends EventEmitter {
         // Clear stale pending schedule that may reference the now-active version
         this.pendingSchedule = null;
         await this.db.setState(this.config.chain, this.config.network, 'pending_schedule', '');
+        this.initProducerMetrics();
       }
     }
 
@@ -223,6 +253,7 @@ export class ChainMonitor extends EventEmitter {
         });
 
         this.roundEvaluator.recordFork(forkBlockNum, this.lastBlockProducer, block.producer);
+        metrics.forks.inc({ chain: this.config.chain, network: this.config.network });
 
         this.emit('fork', {
           chain: this.config.chain,
@@ -291,6 +322,7 @@ export class ChainMonitor extends EventEmitter {
       );
       if (result) {
         await this.roundEvaluator.setScheduleActivation(block.timestamp);
+        this.initProducerMetrics();
 
         this.emit('schedule_change', {
           chain: this.config.chain,
@@ -400,6 +432,8 @@ export class ChainMonitor extends EventEmitter {
       this.emitRoundResult(roundResult);
     }
 
+    this.updatePositionMetrics(result, blockNum, block.timestamp);
+
     // Progress logging
     this.blocksProcessed++;
     const now = Date.now();
@@ -423,7 +457,29 @@ export class ChainMonitor extends EventEmitter {
     }
   }
 
+  private updatePositionMetrics(result: ShipResult, blockNum: number, timestamp: string): void {
+    const labels = { chain: this.config.chain, network: this.config.network };
+    metrics.headBlock.set(labels, result.head.block_num);
+    metrics.processedBlock.set(labels, blockNum);
+    metrics.blocksBehind.set(labels, Math.max(0, result.head.block_num - blockNum));
+    if (result.last_irreversible) metrics.libBlock.set(labels, result.last_irreversible.block_num);
+    const seconds = metrics.blockTimeSeconds(timestamp);
+    if (seconds !== null) metrics.lastBlockTimestamp.set(labels, seconds);
+  }
+
+  private recordRoundMetrics(result: RoundResult): void {
+    const { chain, network } = this.config;
+    metrics.roundsEvaluated.inc({ chain, network });
+    for (const p of result.producerResults) {
+      const labels = { chain, network, producer: p.producer };
+      if (p.blocksProduced > 0) metrics.blocksProduced.inc(labels, p.blocksProduced);
+      if (p.blocksMissed > 0) metrics.blocksMissed.inc(labels, p.blocksMissed);
+      if (p.blocksProduced === 0 && p.blocksExpected > 0) metrics.roundsMissed.inc(labels);
+    }
+  }
+
   private emitRoundResult(result: RoundResult): void {
+    this.recordRoundMetrics(result);
     const missed = result.producerResults.filter((p) => p.blocksProduced === 0);
     const partial = result.producerResults.filter(
       (p) => p.blocksProduced > 0 && p.blocksMissed > 0

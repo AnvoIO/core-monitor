@@ -22,6 +22,9 @@ services:
     restart: unless-stopped
     env_file: .env
     command: ["node", "dist/writer.js"]
+    # Prometheus /metrics, published on the host's loopback only (for a local scraper such as Alloy).
+    ports:
+      - "127.0.0.1:${METRICS_HOST_PORT:-9464}:9464"
     depends_on:
       postgres:
         condition: service_healthy
