@@ -27,6 +27,8 @@ describe('Config', () => {
     delete process.env.LIBRE_MAINNET_SCHEDULE_SIZE;
     delete process.env.LIBRE_MAINNET_BLOCKS_PER_BP;
     delete process.env.LIBRE_MAINNET_BLOCK_TIME_MS;
+    delete process.env.LIBRE_MAINNET_BLOCK_TIMESTAMP_EPOCH_MS;
+    delete process.env.LIBRE_MAINNET_SYSTEM_ACCOUNT;
     delete process.env.LIBRE_TESTNET_SHIP_URL;
     delete process.env.LIBRE_TESTNET_API_URL;
     delete process.env.LIBRE_TESTNET_CHAIN_ID;
@@ -85,6 +87,20 @@ describe('Config', () => {
     expect(config.chains[0].blockTimeMs).toBe(500);
     expect(config.chains[0].shipFailoverUrls).toEqual([]);
     expect(config.chains[0].telegram).toBeUndefined();
+    expect(config.chains[0].blockTimestampEpochMs).toBe(Date.UTC(2000, 0, 1));
+    expect(config.chains[0].systemAccount).toBe('eosio');
+  });
+
+  it('should read a Wire-style block timestamp epoch and system account', async () => {
+    setMinimalEnv();
+    process.env.LIBRE_MAINNET_BLOCK_TIMESTAMP_EPOCH_MS = '1735689600000';
+    process.env.LIBRE_MAINNET_SYSTEM_ACCOUNT = 'sysio';
+
+    const { loadConfig } = await import('../../src/config.js');
+    const config = loadConfig();
+
+    expect(config.chains[0].blockTimestampEpochMs).toBe(Date.UTC(2025, 0, 1));
+    expect(config.chains[0].systemAccount).toBe('sysio');
   });
 
   it('should override defaults when env vars are set', async () => {

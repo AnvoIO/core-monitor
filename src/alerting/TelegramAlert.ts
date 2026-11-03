@@ -14,6 +14,8 @@ export class TelegramAlert implements AlertChannel {
   name = 'telegram';
   private apiKey: string;
   private chatIds: Map<string, { statusChatId: string; alertChatId: string }>;
+  /** Chains already warned about for missing chat IDs (warn once, not on every alert). */
+  private warnedMissing = new Set<string>();
 
   constructor(
     apiKey: string,
@@ -33,7 +35,10 @@ export class TelegramAlert implements AlertChannel {
     const chainKey = `${message.chain}_${message.network}`;
     const ids = this.chatIds.get(chainKey);
     if (!ids) {
-      log.warn({ chainKey }, 'No Telegram chat IDs configured for chain');
+      if (!this.warnedMissing.has(chainKey)) {
+        this.warnedMissing.add(chainKey);
+        log.warn({ chainKey }, 'No Telegram chat IDs configured for chain; its alerts are not sent');
+      }
       return 'skipped';
     }
 

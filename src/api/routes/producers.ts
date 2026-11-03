@@ -13,14 +13,14 @@ interface ProducerQuery {
   since?: string;
 }
 
-async function fetchRegisteredProducers(apiUrl: string): Promise<any[]> {
+async function fetchRegisteredProducers(apiUrl: string, systemAccount: string = 'eosio'): Promise<any[]> {
   try {
     const response = await fetch(`${apiUrl}/v1/chain/get_table_rows`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        code: 'eosio',
-        scope: 'eosio',
+        code: systemAccount,
+        scope: systemAccount,
         table: 'producers',
         limit: 500,
         json: true,
@@ -28,7 +28,8 @@ async function fetchRegisteredProducers(apiUrl: string): Promise<any[]> {
     });
     if (!response.ok) return [];
     const data = await response.json() as any;
-    return data.rows || [];
+    // Key-value tables (Wire) return rows as { key, value }.
+    return (data.rows || []).map((row: any) => (row && row.value && row.key ? row.value : row));
   } catch {
     return [];
   }
@@ -61,7 +62,7 @@ export async function producerRoutes(
       const chainProducerMap = new Map<string, any>();
 
       if (chainConfig) {
-        const allRegistered = await fetchRegisteredProducers(chainConfig.apiUrl);
+        const allRegistered = await fetchRegisteredProducers(chainConfig.apiUrl, chainConfig.systemAccount);
 
         for (const r of allRegistered) {
           chainProducerMap.set(r.owner, r);
