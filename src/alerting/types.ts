@@ -11,7 +11,10 @@ export interface AlertMessage {
   timestamp: string;
 }
 
+/** sent: delivered. failed: delivery attempted and failed. skipped: nothing to send to. */
+export type AlertSendResult = 'sent' | 'failed' | 'skipped';
+
 export interface AlertChannel {
   name: string;
-  send(message: AlertMessage): Promise<void>;
+  send(message: AlertMessage): Promise<AlertSendResult>;
 }

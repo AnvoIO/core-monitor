@@ -380,6 +380,15 @@ export class ShipClient extends EventEmitter {
     return this.state;
   }
 
+  /** 0 while on the primary endpoint, >0 while on a failover endpoint. */
+  get endpointIndex(): number {
+    return this.urlIndex;
+  }
+
+  get endpointUrl(): string {
+    return this.currentUrl;
+  }
+
   private resetStallTimer(): void {
     if (this.stallTimer) clearTimeout(this.stallTimer);
     if (this.state !== 'streaming' && this.state !== 'connected') return;
@@ -405,6 +414,7 @@ export class ShipClient extends EventEmitter {
     this.clearFailback();
     this.dropSocket();
     this.state = 'disconnected';
+    this.emit('disconnect', { reason: 'stall' });
     this.scheduleReconnect();
   }
 
@@ -471,6 +481,7 @@ export class ShipClient extends EventEmitter {
         this.clearFailback();
         this.state = 'disconnected';
         this.ws = null;
+        this.emit('disconnect', { reason: 'close', code });
         this.scheduleReconnect();
       });
 
@@ -784,6 +795,12 @@ export class ShipClient extends EventEmitter {
         block_num: Number(result.head.block_num),
         block_id: String(result.head.block_id),
       },
+      last_irreversible: result.last_irreversible
+        ? {
+            block_num: Number(result.last_irreversible.block_num),
+            block_id: String(result.last_irreversible.block_id),
+          }
+        : null,
       this_block: { block_num: blockNum, block_id: blockId },
       prev_block: result.prev_block
         ? {
@@ -932,8 +949,10 @@ export class ShipClient extends EventEmitter {
     this.clearFailback();
     this.dropSocket();
     this.state = 'disconnected';
+    const from = this.urlIndex;
     this.urlIndex = 0;
     this.currentUrl = this.urls[0];
+    this.emit('endpoint_change', { from, to: 0, url: this.currentUrl });
     this.reconnectAttempts = 0;
     this.connect().catch((err) => {
       log.error({ err }, 'Reconnect to primary failed');
@@ -1000,9 +1019,11 @@ export class ShipClient extends EventEmitter {
 
     // Cycle through URLs round-robin on each attempt
     if (this.urls.length > 1) {
+      const from = this.urlIndex;
       this.urlIndex = (this.urlIndex + 1) % this.urls.length;
       this.currentUrl = this.urls[this.urlIndex];
       log.info({ url: this.currentUrl, urlIndex: this.urlIndex }, 'Switching SHiP endpoint');
+      this.emit('endpoint_change', { from, to: this.urlIndex, url: this.currentUrl });
     }
 
     const delay = Math.min(
@@ -1012,6 +1033,7 @@ export class ShipClient extends EventEmitter {
 
     this.reconnectAttempts++;
     log.info({ attempt: this.reconnectAttempts, delayMs: delay }, 'Scheduling reconnect');
+    this.emit('reconnect_attempt', { attempt: this.reconnectAttempts, url: this.currentUrl });
 
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;

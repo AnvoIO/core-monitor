@@ -59,6 +59,8 @@ export interface ShipTransactionTrace {
 
 export interface ShipResult {
   head: { block_num: number; block_id: string };
+  /** Optional so synthetic results (tests, catchup) needn't supply it. */
+  last_irreversible?: { block_num: number; block_id: string } | null;
   this_block: { block_num: number; block_id: string } | null;
   prev_block: { block_num: number; block_id: string } | null;
   block: ShipBlockHeader | null;

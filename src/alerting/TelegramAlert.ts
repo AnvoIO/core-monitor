@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
-import type { AlertChannel, AlertMessage } from './types.js';
+import type { AlertChannel, AlertMessage, AlertSendResult } from './types.js';
+import { errorCause } from '../utils/errors.js';
 
 const log = logger.child({ module: 'TelegramAlert' });
 
@@ -26,14 +27,14 @@ export class TelegramAlert implements AlertChannel {
     return this.apiKey.length > 0 && this.chatIds.size > 0;
   }
 
-  async send(message: AlertMessage): Promise<void> {
-    if (!this.isConfigured) return;
+  async send(message: AlertMessage): Promise<AlertSendResult> {
+    if (!this.isConfigured) return 'skipped';
 
     const chainKey = `${message.chain}_${message.network}`;
     const ids = this.chatIds.get(chainKey);
     if (!ids) {
       log.warn({ chainKey }, 'No Telegram chat IDs configured for chain');
-      return;
+      return 'skipped';
     }
 
     const emoji = SEVERITY_EMOJI[message.severity] || '';
@@ -42,15 +43,18 @@ export class TelegramAlert implements AlertChannel {
 
     const routing = message.routing || 'status';
 
+    let ok = true;
     if (routing === 'status' || routing === 'both') {
-      await this.sendToChat(ids.statusChatId, text);
+      ok = (await this.sendToChat(ids.statusChatId, text)) && ok;
     }
     if ((routing === 'alert' || routing === 'both') && ids.alertChatId !== ids.statusChatId) {
-      await this.sendToChat(ids.alertChatId, text);
+      ok = (await this.sendToChat(ids.alertChatId, text)) && ok;
     }
+    return ok ? 'sent' : 'failed';
   }
 
-  private async sendToChat(chatId: string, text: string): Promise<void> {
+  /** True if Telegram accepted the message. */
+  private async sendToChat(chatId: string, text: string): Promise<boolean> {
     // Note: Telegram Bot API requires the token in the URL path — this is by design.
     // Ensure this URL is never logged.
     const url = `https://api.telegram.org/bot${this.apiKey}/sendMessage`;
@@ -70,9 +74,12 @@ export class TelegramAlert implements AlertChannel {
       if (!response.ok) {
         const body = await response.text();
         log.error({ chatId, status: response.status, body }, 'Telegram API error');
+        return false;
       }
+      return true;
     } catch (err) {
-      log.error({ err, chatId }, 'Failed to send Telegram message');
+      log.error({ err, cause: errorCause(err), chatId }, 'Failed to send Telegram message');
+      return false;
     }
   }
 }

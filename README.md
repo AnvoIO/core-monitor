@@ -156,6 +156,34 @@ All configuration is via environment variables (see `.env.example`):
 | `API_CORS_ORIGIN` | CORS allowed origin | `*` |
 | `MONITOR_PORT` | Host port mapping for Docker | `3100` |
 
+### Metrics (Writer)
+
+The writer serves Prometheus metrics at `GET /metrics` on port 9464. Docker Compose publishes it on the host's loopback only, at `127.0.0.1:${METRICS_HOST_PORT}`, for a scraper on the same host.
+
+| Variable | Description | Default |
+|---|---|---|
+| `METRICS_ENABLED` | Serve `/metrics` from the writer | `true` |
+| `METRICS_HOST_PORT` | Host loopback port mapping for Docker | `9464` |
+
+Every series carries `chain` and `network` labels (alert metrics carry `channel` instead). All names start with `core_monitor_`:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `blocks_produced_total`, `blocks_missed_total` | counter | Blocks per `producer`, counted when each round completes |
+| `rounds_missed_total` | counter | Rounds in which the `producer` produced no blocks |
+| `rounds_total` | counter | Rounds evaluated |
+| `forks_total` | counter | Forks detected |
+| `head_block`, `lib_block`, `processed_block` | gauge | Head and last irreversible block from SHiP; last block the writer processed |
+| `blocks_behind` | gauge | `head_block` minus `processed_block` |
+| `last_block_timestamp_seconds` | gauge | Block time of the last processed block (`time() - x` is the lag) |
+| `up` | gauge | 1 while the writer runs the monitor for the chain |
+| `ship_connected`, `ship_failover_active` | gauge | SHiP socket open; on a failover endpoint |
+| `ship_endpoint_info` | gauge | Current endpoint as `role` (`primary`/`failover`) and `host` (host:port only) |
+| `ship_disconnects_total`, `ship_reconnect_attempts_total`, `ship_failovers_total` | counter | SHiP connection events |
+| `alerts_sent_total`, `alert_send_failures_total` | counter | Alert deliveries per `channel` (and `severity`); failed alerts are not retried |
+
+Counters start at 0 for every producer in the active schedule, every chain and every alert channel, so the first increment after a restart shows up in `increase()`. Node.js process metrics are included with the same prefix.
+
 ### Catchup Writer
 
 | Variable | Description | Default |
