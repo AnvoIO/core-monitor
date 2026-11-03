@@ -36,7 +36,7 @@ import { Name, Serializer } from '@wharfkit/antelope';
 const log = logger.child({ module: 'catchup' });
 
 const PROGRESS_INTERVAL = 10000;
-/** Unacknowledged blocks SHiP may send ahead of processing. */
+/** Blocks SHiP may send ahead of processing (acknowledged once processed). */
 const CATCHUP_MAX_IN_FLIGHT = 1000;
 
 interface CatchupChain {
@@ -203,6 +203,10 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
     // Bulk read: with SHiP's default-sized window a remote endpoint (e.g. through Cloudflare,
     // ~25 ms away) caps the stream near 300 blocks/s.
     maxMessagesInFlight: CATCHUP_MAX_IN_FLIGHT,
+    // Acknowledge after processing, so at most CATCHUP_MAX_IN_FLIGHT blocks wait in memory.
+    // Acknowledging on delivery let SHiP outrun processing over the LAN: decoding starved
+    // the database work (~60 blocks/s) while the queue grew without limit.
+    manualAck: true,
   });
   state.ship = ship;
 
@@ -227,7 +231,7 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
       processCatchupBlock(state, result)
     ).catch(err => {
       log.error({ err, chain: chainConfig.id }, 'Catchup block processing error');
-    });
+    }).finally(() => ship.acknowledge());
   });
 
   ship.on('max_reconnects', () => {

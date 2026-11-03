@@ -70,6 +70,8 @@ class FakeShip {
   upgradeHeaders: Array<Record<string, unknown>> = [];
   private sockets = new Set<WebSocket>();
   private timers = new Set<NodeJS.Timeout>();
+  /** Blocks each socket may still be sent: max_messages_in_flight, topped up by acks. */
+  private credits = new Map<WebSocket, number>();
 
   /** branchOf lets a test give one block number different ids on different nodes. */
   constructor(
@@ -133,6 +135,7 @@ class FakeShip {
       }));
       let start = Number(request.start_block_num);
       this.requests.push({ start, have, inFlight: Number(request.max_messages_in_flight) });
+      this.credits.set(socket, Number(request.max_messages_in_flight));
 
       // Same rule as nodeos: rewind to any position the node lacks or disagrees with.
       for (const p of have) {
@@ -140,6 +143,8 @@ class FakeShip {
         if (this.blockIdAvailable(p.block_num) !== p.block_id) start = p.block_num;
       }
       this.stream(socket, start);
+    } else if (type === 'get_blocks_ack_request_v0') {
+      this.credits.set(socket, (this.credits.get(socket) ?? 0) + Number(request.num_messages));
     }
   }
 
@@ -152,7 +157,8 @@ class FakeShip {
         return;
       }
       if (this.opts.advance) this.head++;
-      while (next <= this.head) {
+      while (next <= this.head && (this.credits.get(socket) ?? 0) > 0) {
+        this.credits.set(socket, this.credits.get(socket)! - 1);
         const headPos = position(this.head, this.branch(this.head));
         socket.send(Serializer.encode({
           type: 'result',
@@ -289,6 +295,20 @@ describe('ShipClient reconnect over real sockets', () => {
     await large.client.connect();
     await until(() => ship.requests.length === 2, 'both block requests');
     expect(ship.requests.map((r) => r.inFlight).sort((a, b) => a - b)).toEqual([10, 1000]);
+  });
+
+  it('with manualAck, sends no more than the window until the consumer acknowledges', async () => {
+    const ship = await startShip(50);
+    const { client, blocks } = startClient({ url: ship.url, startBlock: 1, maxMessagesInFlight: 3, manualAck: true });
+    await client.connect();
+    await until(() => blocks.length === 3, 'first window');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(blocks.length).toBe(3);
+    client.acknowledge();
+    client.acknowledge();
+    await until(() => blocks.length === 5, 'two more blocks');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(blocks.map((b) => b.num)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('fails over and back with every block delivered exactly once', async () => {

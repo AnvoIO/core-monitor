@@ -126,4 +126,10 @@ export interface ShipClientOptions {
    * most this many blocks per round trip, so bulk reads over a WAN path need a larger window.
    */
   maxMessagesInFlight?: number;
+  /**
+   * Don't acknowledge blocks on delivery; the consumer calls acknowledge() once it has
+   * processed each one. The in-flight window then bounds blocks decoded but not yet
+   * processed. Without it a consumer slower than the stream queues blocks without limit.
+   */
+  manualAck?: boolean;
 }
