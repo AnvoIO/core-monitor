@@ -237,16 +237,26 @@ async function startCatchup(chainConfig: ChainConfig, db: Database): Promise<voi
   await ship.connect();
 }
 
-async function finishCatchup(state: CatchupChain, blockNum: number): Promise<void> {
+async function finishCatchup(state: CatchupChain, blockNum: number, timestamp: string): Promise<void> {
   state.done = true;
+  state.ship.disconnect();
   await state.savanna?.persist();
+
+  // Batch inserts don't maintain daily stats or outage events; derive them for everything
+  // before the live writer's start.
+  const { chain, network } = state.config;
+  const from = await state.db.getEarliestRoundTimestamp(chain, network);
+  if (from && from < timestamp) {
+    await state.db.rebuildDerivedStats(chain, network, from, timestamp);
+    log.info({ chain: state.config.id, from, to: timestamp }, 'Rebuilt daily stats and outage events');
+  }
+
   log.info({
     chain: state.config.id,
     blockNum,
     endBlock: state.endBlock,
     blocksProcessed: state.blocksProcessed,
   }, 'Catchup complete — reached live writer start point');
-  state.ship.disconnect();
 }
 
 async function processCatchupBlock(state: CatchupChain, result: ShipResult): Promise<void> {
@@ -259,7 +269,7 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
 
   // Past the live writer's start (e.g. a resumed stream): nothing to do.
   if (state.endBlock > 0 && blockNum > state.endBlock) {
-    await finishCatchup(state, blockNum);
+    await finishCatchup(state, blockNum, block.timestamp);
     return;
   }
 
@@ -351,7 +361,7 @@ async function processCatchupBlock(state: CatchupChain, result: ShipResult): Pro
 
   // The live writer starts at endBlock. Processing it closed the catchup's last round.
   if (state.endBlock > 0 && blockNum >= state.endBlock) {
-    await finishCatchup(state, blockNum);
+    await finishCatchup(state, blockNum, block.timestamp);
     return;
   }
 

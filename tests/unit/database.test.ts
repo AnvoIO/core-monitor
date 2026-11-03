@@ -128,6 +128,49 @@ describe('Database', () => {
     });
   });
 
+  describe('rebuildDerivedStats', () => {
+    // Rounds with alpha and bravo; bravo misses rounds 2-3 on day 1. Day 2 has one catchup
+    // round before the live start (12:00) and a live round after it.
+    const addRound = async (n: number, start: string, bravoProduced: number) => {
+      const id = await db.insertRound({
+        chain: 'wire', network: 'testnet', round_number: n, schedule_version: 1,
+        timestamp_start: start, timestamp_end: start.replace(/:00\.000$/, ':59.500'), producers_scheduled: 2,
+        producers_produced: bravoProduced > 0 ? 2 : 1, producers_missed: bravoProduced > 0 ? 0 : 1,
+      });
+      await db.insertRoundProducer({ round_id: id, producer: 'alpha', position: 0, blocks_expected: 12, blocks_produced: 12, blocks_missed: 0, first_block: n * 24, last_block: n * 24 + 11 });
+      await db.insertRoundProducer({ round_id: id, producer: 'bravo', position: 1, blocks_expected: 12, blocks_produced: bravoProduced, blocks_missed: 12 - bravoProduced, first_block: null, last_block: null });
+    };
+    const query = (sql: string) => (db as any).pool.query(sql).then((r: any) => r.rows);
+
+    it('derives daily stats and outage events for the range, leaving later rows alone', async () => {
+      await addRound(1, '2026-10-20T10:00:00.000', 12);
+      await addRound(2, '2026-10-20T10:01:00.000', 0);
+      await addRound(3, '2026-10-20T10:02:00.000', 0);
+      await addRound(4, '2026-10-20T10:03:00.000', 12);
+      await addRound(5, '2026-10-21T11:00:00.000', 12);
+      await addRound(6, '2026-10-21T12:00:00.000', 0); // live writer's
+      // A stale day-1 row and a live outage event that must survive.
+      await db.upsertRoundCountsDaily({ chain: 'wire', network: 'testnet', day: '2026-10-20', perfect: true });
+      await db.insertOutageEvent({ chain: 'wire', network: 'testnet', producer: 'bravo', rounds_count: 1, start_round_number: 6, end_round_number: 6, schedule_version: 1, timestamp_start: '2026-10-21T12:00:00.000', timestamp_end: '2026-10-21T12:00:59.500' });
+
+      await db.rebuildDerivedStats('wire', 'testnet', '2026-10-20T10:00:00.000', '2026-10-21T12:00:00.000');
+      await db.rebuildDerivedStats('wire', 'testnet', '2026-10-20T10:00:00.000', '2026-10-21T12:00:00.000'); // idempotent
+
+      expect(await query(`SELECT to_char(day,'YYYY-MM-DD') d, total_rounds, perfect_rounds, issue_rounds FROM round_counts_daily WHERE chain='wire' ORDER BY day`)).toEqual([
+        { d: '2026-10-20', total_rounds: 4, perfect_rounds: 2, issue_rounds: 2 },
+        { d: '2026-10-21', total_rounds: 2, perfect_rounds: 1, issue_rounds: 1 }, // reconciled: both rounds of the boundary day
+      ]);
+      expect(await query(`SELECT to_char(day,'YYYY-MM-DD') d, producer, rounds_scheduled, rounds_missed, blocks_missed FROM producer_stats_daily WHERE chain='wire' AND producer='bravo' ORDER BY day`)).toEqual([
+        { d: '2026-10-20', producer: 'bravo', rounds_scheduled: 4, rounds_missed: 2, blocks_missed: 24 },
+        { d: '2026-10-21', producer: 'bravo', rounds_scheduled: 2, rounds_missed: 1, blocks_missed: 12 },
+      ]);
+      expect(await query(`SELECT producer, rounds_count, start_round_number, end_round_number, timestamp_start, timestamp_end FROM outage_events WHERE chain='wire' ORDER BY timestamp_start`)).toEqual([
+        { producer: 'bravo', rounds_count: 2, start_round_number: 2, end_round_number: 3, timestamp_start: '2026-10-20T10:01:00.000', timestamp_end: '2026-10-20T10:02:59.500' },
+        { producer: 'bravo', rounds_count: 1, start_round_number: 6, end_round_number: 6, timestamp_start: '2026-10-21T12:00:00.000', timestamp_end: '2026-10-21T12:00:59.500' },
+      ]);
+    });
+  });
+
   describe('missed_block_events', () => {
     async function seedRound() {
       return await db.insertRound({
