@@ -144,6 +144,17 @@ export class RoundEvaluator {
     return this.displayRound;
   }
 
+  /**
+   * Producers per round: a round is one pass through the active schedule (producers ×
+   * blocksPerBp slots). Chains often start with fewer producers than they settle at (Libre
+   * mainnet ran 8 to 20 for its first seven weeks, Wire testnet 1 to 20 for three days), so a
+   * fixed size would give producers several turns per round and hide missed ones.
+   * SCHEDULE_SIZE applies only until a schedule is known.
+   */
+  private get roundSize(): number {
+    return this.schedule.producers.length || this.config.scheduleSize;
+  }
+
   /** False until an activation point exists; round numbers are then counted from slot 0. */
   get hasScheduleActivation(): boolean {
     return this.activationKnown;
@@ -152,9 +163,7 @@ export class RoundEvaluator {
   async setScheduleActivation(activationTimestamp: string): Promise<void> {
     this.activationKnown = true;
     const slot = timestampToSlot(activationTimestamp, this.epochMs);
-    this.scheduleActivationGlobalRound = slotToGlobalRound(
-      slot, this.config.scheduleSize, this.config.blocksPerBp
-    );
+    this.scheduleActivationGlobalRound = slotToGlobalRound(slot, this.roundSize, this.config.blocksPerBp);
 
     // Flush any open outage streaks — producers may no longer be in the new schedule
     await this.flushOutageStreaks();
@@ -166,6 +175,9 @@ export class RoundEvaluator {
     this.roundStartTimestamp = '';
     this.roundEndTimestamp = '';
     this.firstRoundIsPartial = true;
+    // The round size may have changed, and with it the scale of global round numbers:
+    // restart round tracking from the next block.
+    this.currentGlobalRound = -1;
 
     await this.db.setState(
       this.config.chain, this.config.network,
@@ -185,7 +197,7 @@ export class RoundEvaluator {
   async processBlock(block: BlockRecord): Promise<RoundResult | null> {
     const { producer, block_num, timestamp } = block;
     const slot = timestampToSlot(timestamp, this.epochMs);
-    const globalRound = slotToGlobalRound(slot, this.config.scheduleSize, this.config.blocksPerBp);
+    const globalRound = slotToGlobalRound(slot, this.roundSize, this.config.blocksPerBp);
 
     if (this.currentGlobalRound === -1) {
       this.currentGlobalRound = globalRound;

@@ -59,6 +59,7 @@ const position = (num: number, branch = 'a') => ({ block_num: num, block_id: idO
 interface BlockRequest {
   start: number;
   have: Array<{ block_num: number; block_id: string }>;
+  inFlight: number;
 }
 
 /** Real WebSocket endpoint speaking enough of the SHiP protocol, including have_positions. */
@@ -131,7 +132,7 @@ class FakeShip {
         block_id: String(p.block_id),
       }));
       let start = Number(request.start_block_num);
-      this.requests.push({ start, have });
+      this.requests.push({ start, have, inFlight: Number(request.max_messages_in_flight) });
 
       // Same rule as nodeos: rewind to any position the node lacks or disagrees with.
       for (const p of have) {
@@ -278,6 +279,16 @@ describe('ShipClient reconnect over real sockets', () => {
     expect(ship.requests[1].start).toBe(111);
     expect(ship.requests[1].have.at(-1)).toEqual(position(110));
     expect(blocks.map((b) => b.num)).toEqual(Array.from({ length: 11 }, (_, i) => 100 + i));
+  });
+
+  it('asks for the configured in-flight window, defaulting to 10', async () => {
+    const ship = await startShip(5);
+    const small = startClient({ url: ship.url, startBlock: 1 });
+    const large = startClient({ url: ship.url, startBlock: 1, maxMessagesInFlight: 1000 });
+    await small.client.connect();
+    await large.client.connect();
+    await until(() => ship.requests.length === 2, 'both block requests');
+    expect(ship.requests.map((r) => r.inFlight).sort((a, b) => a - b)).toEqual([10, 1000]);
   });
 
   it('fails over and back with every block delivered exactly once', async () => {

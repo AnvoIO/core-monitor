@@ -121,4 +121,9 @@ export interface ShipClientOptions {
   access?: ShipAccessCredentials;
   /** Epoch of the chain's block timestamps, in Unix ms (default 2000-01-01; Wire uses 2025-01-01) */
   blockTimestampEpochMs?: number;
+  /**
+   * Blocks SHiP may send before the client acknowledges them (default 10). Throughput is at
+   * most this many blocks per round trip, so bulk reads over a WAN path need a larger window.
+   */
+  maxMessagesInFlight?: number;
 }

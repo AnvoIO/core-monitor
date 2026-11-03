@@ -511,13 +511,6 @@ export class ChainMonitor extends EventEmitter {
 
     if (step.activated) {
       const policy = step.activated;
-      if (policy.producers.length !== this.config.scheduleSize) {
-        // Rounds are windows of scheduleSize * blocksPerBp slots; a different size misaligns them.
-        this.log.warn(
-          { version: policy.version, producers: policy.producers.length, configured: this.config.scheduleSize },
-          'Active schedule size differs from SCHEDULE_SIZE — round results will be wrong until it is updated'
-        );
-      }
       const result = await this.schedule.updateSchedule(policy.version, policy.producers, blockNum, block.timestamp);
       if (result) {
         await this.roundEvaluator.setScheduleActivation(block.timestamp);
