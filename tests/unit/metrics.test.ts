@@ -170,13 +170,13 @@ describe('alert delivery metrics', () => {
     });
 
     const telegram = () =>
-      new TelegramAlert('123:abc', new Map([['libre_testnet', { statusChatId: 's', alertChatId: 'a' }]]));
+      new TelegramAlert('123:abc', new Map([['libre_testnet', { statusChatId: 's', alertChatId: 'a' }]]), { retryDelaysMs: [0, 0] });
 
     it('reports failed when any chat send fails', async () => {
       let call = 0;
       globalThis.fetch = vi.fn(async () => {
         call++;
-        if (call === 2) throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
+        if (call >= 2) throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
         return new Response('{}', { status: 200 });
       }) as typeof fetch;
 

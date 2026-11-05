@@ -118,7 +118,7 @@ export const alertsSent = new Counter({
 
 export const alertSendFailures = new Counter({
   name: `${METRIC_PREFIX}alert_send_failures_total`,
-  help: 'Alerts that failed to deliver, per channel (alerts are not retried)',
+  help: 'Alerts that failed to deliver, per channel (after any retries the channel makes)',
   labelNames: ['channel'] as const,
   registers: [registry],
 });
