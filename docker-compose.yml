@@ -20,6 +20,9 @@ services:
     build: .
     container_name: anvoio-core-monitor-writer
     restart: unless-stopped
+    # IPv4 resolvers: Docker's default upstreams on the deployment host included IPv6
+    # resolvers, and lookups through them intermittently failed with EAI_AGAIN.
+    dns: [1.1.1.1, 1.0.0.1]
     env_file: .env
     command: ["node", "dist/writer.js"]
     # Prometheus /metrics, published on the host's loopback only (for a local scraper such as Alloy).
@@ -33,6 +36,9 @@ services:
     build: .
     container_name: anvoio-core-monitor-reader
     restart: unless-stopped
+    # IPv4 resolvers: Docker's default upstreams on the deployment host included IPv6
+    # resolvers, and lookups through them intermittently failed with EAI_AGAIN.
+    dns: [1.1.1.1, 1.0.0.1]
     env_file: .env
     command: ["node", "dist/reader.js"]
     ports:

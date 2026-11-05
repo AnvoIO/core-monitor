@@ -154,7 +154,7 @@ describe('TelegramAlert', () => {
     const chatIds = new Map([
       ['libre_mainnet', { statusChatId: '-100111', alertChatId: '-100222' }],
     ]);
-    const tg = new TelegramAlert('bot-key', chatIds);
+    const tg = new TelegramAlert('bot-key', chatIds, { retryDelaysMs: [0, 0] });
 
     // Should not throw
     await expect(
@@ -176,7 +176,7 @@ describe('TelegramAlert', () => {
     const chatIds = new Map([
       ['libre_mainnet', { statusChatId: '-100111', alertChatId: '-100222' }],
     ]);
-    const tg = new TelegramAlert('bot-key', chatIds);
+    const tg = new TelegramAlert('bot-key', chatIds, { retryDelaysMs: [0, 0] });
 
     await expect(
       tg.send({
@@ -188,5 +188,93 @@ describe('TelegramAlert', () => {
         timestamp: '2026-03-30T00:00:00.000',
       })
     ).resolves.toBe('failed');
+  });
+
+  describe('retries', () => {
+    const chatIds = new Map([
+      ['libre_mainnet', { statusChatId: '-100111', alertChatId: '-100222' }],
+    ]);
+    const info = {
+      severity: 'info' as const,
+      chain: 'libre',
+      network: 'mainnet',
+      title: 'Test',
+      body: 'Body',
+      timestamp: '2026-03-30T00:00:00.000',
+    };
+    const dnsFailure = () =>
+      Object.assign(new TypeError('fetch failed'), {
+        cause: { code: 'EAI_AGAIN', name: 'Error' },
+      });
+
+    it('retries a DNS failure and reports sent when a later attempt succeeds', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockRejectedValueOnce(dnsFailure())
+        .mockResolvedValueOnce({ ok: true });
+      globalThis.fetch = mockFetch;
+
+      const tg = new TelegramAlert('bot-key', chatIds, { retryDelaysMs: [0, 0] });
+      await expect(tg.send(info)).resolves.toBe('sent');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up after the configured retries', async () => {
+      const mockFetch = vi.fn().mockRejectedValue(dnsFailure());
+      globalThis.fetch = mockFetch;
+
+      const tg = new TelegramAlert('bot-key', chatIds, { retryDelaysMs: [0, 0] });
+      await expect(tg.send(info)).resolves.toBe('failed');
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('retries 5xx and 429 responses', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, status: 502, text: async () => 'Bad Gateway' })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+          text: async () => JSON.stringify({ ok: false, parameters: { retry_after: 0 } }),
+        })
+        .mockResolvedValueOnce({ ok: true });
+      globalThis.fetch = mockFetch;
+
+      const tg = new TelegramAlert('bot-key', chatIds, { retryDelaysMs: [0, 0] });
+      await expect(tg.send(info)).resolves.toBe('sent');
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not retry other 4xx responses', async () => {
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValue({ ok: false, status: 400, text: async () => 'Bad Request' });
+      globalThis.fetch = mockFetch;
+
+      const tg = new TelegramAlert('bot-key', chatIds, { retryDelaysMs: [0, 0] });
+      await expect(tg.send(info)).resolves.toBe('failed');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('waits the default delay between attempts', async () => {
+      vi.useFakeTimers();
+      try {
+        const mockFetch = vi
+          .fn()
+          .mockRejectedValueOnce(dnsFailure())
+          .mockResolvedValueOnce({ ok: true });
+        globalThis.fetch = mockFetch;
+
+        const tg = new TelegramAlert('bot-key', chatIds);
+        const result = tg.send(info);
+        await vi.advanceTimersByTimeAsync(1_999);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(1);
+        await expect(result).resolves.toBe('sent');
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

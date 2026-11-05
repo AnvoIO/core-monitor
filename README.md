@@ -215,7 +215,7 @@ Every series carries `chain` and `network` labels (alert metrics carry `channel`
 | `ship_connected`, `ship_failover_active` | gauge | SHiP socket open; on a failover endpoint |
 | `ship_endpoint_info` | gauge | Current endpoint as `role` (`primary`/`failover`) and `host` (host:port only) |
 | `ship_disconnects_total`, `ship_reconnect_attempts_total`, `ship_failovers_total` | counter | SHiP connection events |
-| `alerts_sent_total`, `alert_send_failures_total` | counter | Alert deliveries per `channel` (and `severity`); failed alerts are not retried |
+| `alerts_sent_total`, `alert_send_failures_total` | counter | Alert deliveries per `channel` (and `severity`). Telegram retries network errors, 429 and 5xx twice before counting a failure |
 
 Counters start at 0 for every producer in the active schedule, every chain and every alert channel, so the first increment after a restart shows up in `increase()`. Node.js process metrics are included with the same prefix.
 
